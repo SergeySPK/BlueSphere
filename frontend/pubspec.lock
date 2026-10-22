@@ -70,6 +70,15 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "6.0.0"
+  flutter_max_miniapp:
+    dependency: "direct main"
+    description:
+      path: "."
+      ref: HEAD
+      resolved-ref: f58ca1a6c8295397c479ebd727f84d8c886891b2
+      url: "https://github.com/serezhia/flutter_max_miniapp.git"
+    source: git
+    version: "0.0.1"
   flutter_test:
     dependency: "direct dev"
     description: flutter
@@ -192,6 +201,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.10"
+  universal_web:
+    dependency: transitive
+    description:
+      name: universal_web
+      sha256: c58bee740bb9672a3df36cef9b8ee06e75e738d91bcb4309f1ada62a0763a1c0
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.1+2"
   vector_math:
     dependency: transitive
     description:
@@ -200,6 +217,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
+  vize:
+    dependency: "direct main"
+    description:
+      name: vize
+      sha256: cef3be38ea20b3948827442080a9a1e8fa57404a4c5d6f80c8f2536ca4a49719
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.4"
   vm_service:
     dependency: transitive
     description:
@@ -208,6 +233,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "15.4.0"
+  web:
+    dependency: transitive
+    description:
+      name: web
+      sha256: "868d88a33d8a87b18ffc05f9f030ba328ffefba92d6c127917a2ba740f9cfe4a"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.1"
 sdks:
   dart: ">=3.11.5 <4.0.0"
   flutter: ">=3.18.0-18.0.pre.54"
