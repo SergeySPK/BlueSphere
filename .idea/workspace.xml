@@ -4,11 +4,80 @@
     <option name="autoReloadType" value="NONE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="05bb481c-ca64-4c62-9670-803b48ef7a08" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/frontend/lib/main.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/main.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/pubspec.lock" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/pubspec.lock" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/pubspec.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/pubspec.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/web/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/web/index.html" afterDir="false" />
+    <list default="true" id="05bb481c-ca64-4c62-9670-803b48ef7a08" name="Changes" comment="Созданы экраны Классы и Нагрузка">
+      <change beforePath="$PROJECT_DIR$/.idea/BlueSphere.iml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_SDK.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/LICENSE" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/.metadata" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/README.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/analysis_options.yaml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/build.gradle.kts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/debug/AndroidManifest.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/AndroidManifest.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/kotlin/com/example/blue_sphere/MainActivity.kt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/res/drawable-v21/launch_background.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/res/drawable/launch_background.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/res/values-night/styles.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/res/values/styles.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/profile/AndroidManifest.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/build.gradle.kts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/gradle.properties" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/gradle/wrapper/gradle-wrapper.properties" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/android/settings.gradle.kts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/chat.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/down.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/exit.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/file.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/left.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/menu.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/school.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/settings.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/star.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/assets/up.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/fonts/Inter.ttf" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/fonts/SF-Pro-Display-Bold.otf" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/fonts/SF-Pro-Display-Medium.otf" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/fonts/SF-Pro-Display-Regular.otf" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/data/mock_data.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/main.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/models/class_status.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/models/load_day.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/models/recommendation.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/models/school_class.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/screens/classes_screen.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/screens/load_screen.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/screens/settings_screen.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/screens/surveys_screen.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/uikit/bottom_nav_bar.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/uikit/calendar.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/uikit/colors.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/uikit/custom_header.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/uikit/recommendations_block.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/uikit/status_banner.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/pubspec.lock" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/pubspec.yaml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/test/widget_test.dart" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/web/favicon.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/web/icons/Icon-192.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/web/icons/Icon-512.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/web/icons/Icon-maskable-192.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/web/icons/Icon-maskable-512.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/web/index.html" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/web/manifest.json" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -88,6 +157,19 @@
       <option name="presentableId" value="Default" />
       <updated>1792597474236</updated>
     </task>
+    <task id="LOCAL-00001" summary="Созданы экраны Классы и Нагрузка">
+      <option name="closed" value="true" />
+      <created>1792659183769</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1792659183769</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Созданы экраны Классы и Нагрузка" />
+    <option name="LAST_COMMIT_MESSAGE" value="Созданы экраны Классы и Нагрузка" />
   </component>
 </project>
