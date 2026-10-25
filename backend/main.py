@@ -1,8 +1,9 @@
 from datetime import date as PythonDate
+import calendar
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session, aliased
 
 from database import SessionLocal
@@ -10,9 +11,11 @@ from models import (
     AcademicYear,
     Administrator,
     Class,
+    Recommendation,
     Schedule,
     Student,
     Subject,
+    Survey,
     Teacher,
     TeachingAssignment,
     User,
@@ -70,8 +73,9 @@ class LoadDay(BaseModel):
     level: int # 0 - перегруз, 4 - пусто
 
 class ClassStatus(BaseModel):
-    level: int # 0 - перегруз, 4 - пусто
-    date: str # формат "09.09"
+    level: Optional[int] = None
+    date: Optional[str] = None
+    has_data: bool = Field(alias="hasData")
 
 class Recommendation(BaseModel):
     daysToReduce: List[int]
@@ -99,25 +103,6 @@ class Lesson(BaseModel):
 class LessonUpdateRequest(BaseModel):
     lesson_type: str
     updated_by_sferum_id: str
-
-# ==========================================
-# 2. МОК-ДАННЫЕ (Заглушки)
-# ==========================================
-
-# Генерируем классы как в mock_data.dart
-mock_classes_db: Dict[str, List[SchoolClass]] = {}
-for i in range(1, 12):
-    mock_classes_db[f"{i} класс"] = [
-        SchoolClass(id=f"{i}a", name=f"Класс {i}А"),
-        SchoolClass(id=f"{i}b", name=f"Класс {i}Б"),
-        SchoolClass(id=f"{i}v", name=f"Класс {i}В"),
-    ]
-
-# Генерируем календарь (уровни от 0 до 4)
-mock_load_days = [
-    LoadDay(day=i, level=i % 5) for i in range(1, 31)
-]
-
 
 
 def validate_max_init_data(init_data: str) -> dict:
@@ -249,7 +234,7 @@ def validate_max_init_data(init_data: str) -> dict:
 
 
 # ==========================================
-# 3. ЭНДПОИНТЫ (API)
+# 2. ЭНДПОИНТЫ (API)
 # ==========================================
 
 @app.get("/")
@@ -364,29 +349,200 @@ def get_classes(db: Session = Depends(get_db)):
     return result
 
 
+
+def get_daily_lesson_counts(
+    db: Session,
+    class_id: str,
+    start_date: PythonDate,
+    end_date: PythonDate,
+) -> Dict[PythonDate, int]:
+    """Считает уроки по дням, не удваивая уроки разных подгрупп."""
+
+    rows = db.execute(
+        select(
+            Schedule.date,
+            func.count(func.distinct(Schedule.lesson_number)),
+        )
+        .join(
+            TeachingAssignment,
+            Schedule.assignment_id == TeachingAssignment.id,
+        )
+        .where(
+            TeachingAssignment.class_id == class_id,
+            Schedule.date >= start_date,
+            Schedule.date <= end_date,
+        )
+        .group_by(Schedule.date)
+    ).all()
+
+    return {day: count for day, count in rows}
+
+
+def get_load_level(lesson_count: int) -> int:
+    """Переводит количество уроков в уровень нагрузки от 0 до 4."""
+
+    if lesson_count >= 7:
+        return 0
+    if lesson_count == 6:
+        return 1
+    if lesson_count == 5:
+        return 2
+    if lesson_count == 4:
+        return 3
+    return 4
+
+
 @app.get("/api/classes/{class_id}/heatmap", response_model=List[LoadDay])
-async def get_heatmap(class_id: str, month: str = "09"):
-    """
-    Возвращает данные для календаря (тепловой карты).
-    """
-    return mock_load_days
+def get_heatmap(
+    class_id: str,
+    month: str = "09",
+    db: Session = Depends(get_db),
+):
+    """Возвращает нагрузку по расписанию за выбранный месяц."""
+
+    if not db.get(Class, class_id):
+        raise HTTPException(status_code=404, detail="Класс не найден")
+
+    try:
+        month_number = int(month)
+        if month_number < 1 or month_number > 12:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="Месяц должен быть указан числом от 01 до 12",
+        )
+
+    year = PythonDate.today().year
+    days_in_month = calendar.monthrange(year, month_number)[1]
+    start_date = PythonDate(year, month_number, 1)
+    end_date = PythonDate(year, month_number, days_in_month)
+
+    counts = get_daily_lesson_counts(
+        db, class_id, start_date, end_date
+    )
+
+    return [
+        LoadDay(
+            day=day,
+            level=get_load_level(counts.get(
+                PythonDate(year, month_number, day), 0
+            )),
+        )
+        for day in range(1, days_in_month + 1)
+    ]
+
 
 @app.get("/api/classes/{class_id}/summary", response_model=ClassStatus)
-async def get_summary(class_id: str, date: str = "09.09"):
-    """
-    Возвращает статус класса на сегодня (для верхнего баннера).
-    """
-    return ClassStatus(level=2, date="09.09")
+def get_summary(
+    class_id: str,
+    date: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Возвращает результат последнего реального опроса класса."""
 
-@app.get("/api/classes/{class_id}/recommendations", response_model=Recommendation)
-async def get_recommendations(class_id: str):
-    """
-    Возвращает рекомендации от ИИ. Пока пустые массивы.
-    """
-    return Recommendation(daysToReduce=[], daysToMoveTo=[])
+    if not db.get(Class, class_id):
+        raise HTTPException(status_code=404, detail="Класс не найден")
+
+    survey_result = db.execute(
+        select(
+            Survey.date,
+            func.avg(Survey.score),
+        )
+        .where(Survey.class_id == class_id)
+        .group_by(Survey.date)
+        .order_by(Survey.date.desc())
+        .limit(1)
+    ).first()
+
+    if survey_result is None:
+        return ClassStatus(
+            level=None,
+            date=None,
+            hasData=False,
+        )
+
+    survey_date, average_score = survey_result
+
+    return ClassStatus(
+        level=round(float(average_score)),
+        date=survey_date.strftime("%d.%m"),
+        hasData=True,
+    )
+
+
+@app.get(
+    "/api/classes/{class_id}/recommendations",
+    response_model=Recommendation,
+)
+def get_recommendations(
+    class_id: str,
+    month: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Рассчитывает рекомендации на основе реального расписания."""
+
+    if not db.get(Class, class_id):
+        raise HTTPException(status_code=404, detail="Класс не найден")
+
+    month_number = int(month) if month else PythonDate.today().month
+
+    if month_number < 1 or month_number > 12:
+        raise HTTPException(
+            status_code=400,
+            detail="Месяц должен быть указан числом от 01 до 12",
+        )
+
+    year = PythonDate.today().year
+    days_in_month = calendar.monthrange(year, month_number)[1]
+    start_date = PythonDate(year, month_number, 1)
+    end_date = PythonDate(year, month_number, days_in_month)
+
+    counts = get_daily_lesson_counts(
+        db, class_id, start_date, end_date
+    )
+
+    # Рекомендации формируются только по дням,
+    # для которых в расписании есть уроки.
+    scheduled_days = {
+        day.day: count
+        for day, count in counts.items()
+        if count > 0
+    }
+
+    if len(scheduled_days) < 2:
+        return Recommendation(
+            daysToReduce=[],
+            daysToMoveTo=[],
+        )
+
+    # Дни с максимальной и минимальной нагрузкой.
+    max_count = max(scheduled_days.values())
+    min_count = min(scheduled_days.values())
+
+    days_to_reduce = sorted(
+        day for day, count in scheduled_days.items()
+        if count == max_count
+    )
+    days_to_move_to = sorted(
+        day for day, count in scheduled_days.items()
+        if count == min_count
+    )
+
+    # Если нагрузка одинакова во все дни,
+    # рекомендации не имеют смысла.
+    if max_count == min_count:
+        days_to_reduce = []
+        days_to_move_to = []
+
+    return Recommendation(
+        daysToReduce=days_to_reduce,
+        daysToMoveTo=days_to_move_to,
+    )
+
 
 # ==========================================
-# 4. РАСПИСАНИЕ И РЕДАКТИРОВАНИЕ УРОКОВ (НОВОЕ)
+# 3. РАСПИСАНИЕ И РЕДАКТИРОВАНИЕ УРОКОВ (НОВОЕ)
 # ==========================================
 
 
