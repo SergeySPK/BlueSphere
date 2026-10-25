@@ -6,9 +6,17 @@ from database import SessionLocal
 from models import AcademicYear, Class, School
 
 
+GRADES = range(1, 12)
+PARALLELS = {
+    "a": "А",
+    "b": "Б",
+    "v": "В",
+    "g": "Г",
+}
+
+
 def seed_database():
     with SessionLocal() as session:
-        # Если школа уже существует, повторно данные не добавляем.
         school = session.scalar(
             select(School).where(School.short_name == "Школа № 1")
         )
@@ -24,7 +32,6 @@ def seed_database():
             session.add(school)
             session.flush()
 
-        # Проверяем, есть ли учебный год у этой школы.
         academic_year = session.scalar(
             select(AcademicYear).where(
                 AcademicYear.school_id == school.id,
@@ -42,30 +49,37 @@ def seed_database():
             session.add(academic_year)
             session.flush()
 
-        # Добавляем демонстрационные классы, если их ещё нет.
-        demo_classes = [
-            ("5a", "5А"),
-            ("5b", "5Б"),
-            ("5v", "5В"),
-        ]
+        created_count = 0
 
-        for class_id, class_name in demo_classes:
-            existing_class = session.get(Class, class_id)
+        for grade in GRADES:
+            for parallel_id, parallel_name in PARALLELS.items():
+                class_id = f"{grade}{parallel_id}"
+                class_name = f"{grade}{parallel_name}"
 
-            if existing_class is None:
-                session.add(
-                    Class(
-                        id=class_id,
-                        school_id=school.id,
-                        academic_year_id=academic_year.id,
-                        name=class_name,
+                existing_class = session.get(Class, class_id)
+
+                if existing_class is None:
+                    session.add(
+                        Class(
+                            id=class_id,
+                            school_id=school.id,
+                            academic_year_id=academic_year.id,
+                            name=class_name,
+                        )
                     )
-                )
+                    created_count += 1
 
         session.commit()
 
-        print("Демонстрационные данные добавлены.")
-        print("Классы: 5А, 5Б, 5В.")
+        total_classes = session.scalar(
+            select(Class.id).where(Class.school_id == school.id)
+        )
+
+        print("Демонстрационные данные подготовлены.")
+        print(f"Новых классов добавлено: {created_count}")
+        print("Ожидаемое количество классов: 44")
+        print("Параллели: А, Б, В, Г.")
+        print("Учебный год: 2026–2027.")
 
 
 if __name__ == "__main__":
