@@ -1,11 +1,8 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Blue Sphere API"
 readme = "README.md"
-authors = [
-    { name = "SergeySPK", email = "shamanidisergo@gmail.com" }
-]
 requires-python = ">=3.13"
 dependencies = [
     "alembic>=1.16,<2.0",
@@ -17,9 +14,10 @@ dependencies = [
     "uvicorn>=0.54.0",
 ]
 
-[project.scripts]
-backend = "backend:main"
-
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "backend"
+module-root = "src"
