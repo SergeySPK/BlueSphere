@@ -5,7 +5,7 @@ class LoadDay {
 
   LoadDay({required this.day, required this.level});
 
-  // для создание модели из JSON (который пришлет бэкенд)
+  // для создание модели из JSON
   factory LoadDay.fromJson(Map<String, dynamic> json) {
     return LoadDay(day: json['day'] as int, level: json['level'] as int);
   }

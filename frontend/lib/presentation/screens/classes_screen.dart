@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
-import '../uikit/custom_header.dart';
-import '../data/mock_data.dart';
-import '../models/school_class.dart';
+import '../../domain/school_class.dart';
+import '../../data/api_service.dart';
 import '../uikit/colors.dart';
+import '../uikit/custom_header.dart';
 
-// Экран Классы
 class ClassesScreen extends StatefulWidget {
-  final Function(String) onClassSelected;
+  final Function(String id, String name) onClassSelected;
 
   const ClassesScreen({super.key, required this.onClassSelected});
 
@@ -16,7 +15,23 @@ class ClassesScreen extends StatefulWidget {
 }
 
 class _ClassesScreenState extends State<ClassesScreen> {
+  Map<String, List<SchoolClass>>? _classes;
+  bool _isLoading = true;
   String? _expandedGroup;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadClasses();
+  }
+
+  Future<void> _loadClasses() async {
+    final data = await ApiService.getClasses();
+    setState(() {
+      _classes = data;
+      _isLoading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,15 +42,19 @@ class _ClassesScreenState extends State<ClassesScreen> {
           children: [
             CustomHeader(title: 'Выберите класс', onClose: () {}, onMenu: () {}),
             Expanded(
-              child: ListView.builder(
-                padding: po(l: 16, r: 16, t: 8, b: 80),
-                itemCount: mockClasses.length,
-                itemBuilder: (context, index) {
-                  final groupName = mockClasses.keys.elementAt(index);
-                  final classes = mockClasses[groupName]!;
-                  return _buildAccordionGroup(groupName, classes);
-                },
-              ),
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _classes == null
+                  ? const Center(child: Text('Ошибка загрузки'))
+                  : ListView.builder(
+                      padding: po(l: 16, r: 16, t: 8, b: 80),
+                      itemCount: _classes!.keys.length,
+                      itemBuilder: (context, index) {
+                        final groupName = _classes!.keys.elementAt(index);
+                        final classes = _classes![groupName]!;
+                        return _buildAccordionGroup(groupName, classes);
+                      },
+                    ),
             ),
           ],
         ),
@@ -61,15 +80,14 @@ class _ClassesScreenState extends State<ClassesScreen> {
               children: [
                 Text(
                   groupName,
-                  style: TextStyle(fontFamily: 'Inter', fontSize: 18, fontWeight: .w600, color: classColor),
+                  style: TextStyle(fontFamily: 'Inter', fontSize: 18, fontWeight: .w600, color: black),
                 ),
                 Spacer(),
-                Image.asset(isExpanded ? 'assets/up.png' : 'assets/down.png', width: 14.fw, height: 7.fh, color: classColor),
+                Image.asset(isExpanded ? 'assets/up.png' : 'assets/down.png', width: 24, height: 24),
               ],
             ),
           ),
         ),
-
         if (isExpanded)
           Padding(
             padding: po(t: 4, b: 16),
@@ -81,7 +99,6 @@ class _ClassesScreenState extends State<ClassesScreen> {
               }).toList(),
             ),
           ),
-
         Divider(color: text.withOpacity(0.2), thickness: 1, height: 1),
       ],
     );
@@ -90,14 +107,14 @@ class _ClassesScreenState extends State<ClassesScreen> {
   Widget _buildClassChip(SchoolClass schoolClass) {
     return GestureDetector(
       onTap: () {
-        widget.onClassSelected(schoolClass.name);
+        widget.onClassSelected(schoolClass.id, schoolClass.name);
       },
       child: Container(
-        padding: ps(v: 6, h: 18),
-        decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
+        padding: po(l: 16, r: 16, t: 8, b: 8),
+        decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(20)),
         child: Text(
           schoolClass.name,
-          style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w600, color: classColor),
+          style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w400, color: black),
         ),
       ),
     );

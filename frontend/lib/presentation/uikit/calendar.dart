@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
-import '../models/load_day.dart';
+import '../../domain/load_day.dart';
 import 'colors.dart';
 
 // Кастомный календарь
 class LoadCalendar extends StatelessWidget {
   final DateTime date; // Какой месяц мы рисуем
   final List<LoadDay> loadDays; // Мок данные
+  final Function(int day)? onDayTap;
 
-  const LoadCalendar({super.key, required this.date, required this.loadDays});
+  const LoadCalendar({super.key, required this.date, required this.loadDays, this.onDayTap});
 
   Color _getLoadColor(int level) {
     switch (level) {
@@ -131,32 +132,45 @@ class LoadCalendar extends StatelessWidget {
 
   Widget _buildDayCell(LoadDay dayData, bool isToday) {
     final level = dayData.level;
-    return Container(
-      decoration: BoxDecoration(
-        color: _getLoadColor(level),
-        borderRadius: BorderRadius.circular(5),
-        border: isToday ? Border.all(color: currentDayBorder, width: 3) : null,
-      ),
-      child: Center(
-        child: Text(
-          '${dayData.day}',
-          style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w400, color: white),
+
+    return GestureDetector(
+      onTap: () {
+        if (onDayTap != null) {
+          onDayTap!(dayData.day); // Передаем номер дня наружу
+        }
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: _getLoadColor(level),
+          borderRadius: BorderRadius.circular(5),
+          border: isToday ? Border.all(color: currentDayBorder, width: 3) : null,
+        ),
+        child: Center(
+          child: Text(
+            '${dayData.day}',
+            style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w400, color: white),
+          ),
         ),
       ),
     );
   }
 
   Widget _buildSundayCell(int day, bool isToday) {
-    return Container(
-      decoration: BoxDecoration(
-        color: emptyCell,
-        borderRadius: BorderRadius.circular(5),
-        border: isToday ? Border.all(color: currentDayBorder, width: 3) : null,
-      ),
-      child: Center(
-        child: Text(
-          '$day',
-          style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w400, color: text),
+    return GestureDetector(
+      onTap: () {
+        if (onDayTap != null) onDayTap!(day);
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: emptyCell,
+          borderRadius: BorderRadius.circular(5),
+          border: isToday ? Border.all(color: currentDayBorder, width: 3) : null,
+        ),
+        child: Center(
+          child: Text(
+            '$day',
+            style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w400, color: text),
+          ),
         ),
       ),
     );

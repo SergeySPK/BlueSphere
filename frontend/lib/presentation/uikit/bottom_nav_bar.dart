@@ -27,7 +27,7 @@ class BottomNavBar extends StatelessWidget {
           unselectedItemColor: text,
           selectedLabelStyle: TextStyle(fontFamily: 'SF Pro', fontWeight: FontWeight.w500, letterSpacing: 0.12),
           unselectedLabelStyle: TextStyle(fontFamily: 'SF Pro', fontWeight: FontWeight.w500, letterSpacing: 0.12),
-          items: [_buildItem('assets/school.png', 'Классы'), _buildItem('assets/file.png', 'Нагрузка'), _buildItem('assets/chat.png', 'Опросы'), _buildItem('assets/settings.png', 'Настройки')],
+          items: [_buildItem('assets/school.png', 'Классы'), _buildItem('assets/file.png', 'Нагрузка'), _buildItem('assets/chat.png', 'Опросы')],
         ),
       ),
     );

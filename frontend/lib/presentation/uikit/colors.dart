@@ -10,6 +10,7 @@ const Color accent = Color(0xff7B16B9);
 const Color classColor = Color(0xff3A3A3A);
 const Color currentDayBorder = Color(0xff5882D7);
 const Color emptyCell = Color(0xffE3E0EF);
+const Color results = Color(0xffD9D9D9);
 
 // Цвета загруженности
 const Color loadMin = Color(0xffA7A3B5);

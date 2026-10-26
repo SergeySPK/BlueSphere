@@ -83,3 +83,61 @@ class RecommendationsBlock extends StatelessWidget {
     );
   }
 }
+
+class AiRecommendationItem {
+  final String title;
+  final String description;
+
+  AiRecommendationItem({required this.title, required this.description});
+}
+
+class AiRecommendationsCard extends StatelessWidget {
+  final List<AiRecommendationItem> recommendations;
+
+  const AiRecommendationsCard({super.key, required this.recommendations});
+
+  @override
+  Widget build(BuildContext context) {
+    if (recommendations.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: pa(16),
+      decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'РЕКОМЕНДАЦИИ',
+                style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w700, color: black),
+              ),
+              SizedBox(width: 4.fw),
+              Image.asset('assets/star.png', width: 14, height: 14, color: black),
+            ],
+          ),
+          SizedBox(height: 16.fh),
+          ...recommendations.map((rec) {
+            return Padding(
+              padding: po(b: 16),
+              child: RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '${rec.title}\n',
+                      style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w600, color: black),
+                    ),
+                    TextSpan(
+                      text: rec.description,
+                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 12, fontWeight: .w400, color: text),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}

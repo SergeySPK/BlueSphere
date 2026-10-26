@@ -6,7 +6,7 @@ import '../domain/class_status.dart';
 import '../domain/recommendation.dart';
 
 class ApiService {
-  static const String baseUrl = 'https://blue-sphere-api.layero.app';
+  static const String baseUrl = 'https://blue-sphere-bot.bothost.tech';
 
   // получение роли
   static Future<Map<String, dynamic>?> auth(String initData) async {
@@ -41,7 +41,7 @@ class ApiService {
     }
   }
 
-  // Календарь
+  // календарь
   static Future<List<LoadDay>?> getHeatmap(String classId, String month) async {
     try {
       final response = await http.get(Uri.parse('$baseUrl/api/classes/$classId/heatmap?month=$month'));
@@ -56,11 +56,12 @@ class ApiService {
     }
   }
 
-  // Статус для баннера
+  // статус для баннера
   static Future<ClassStatus?> getSummary(String classId, String date) async {
     try {
       final response = await http.get(Uri.parse('$baseUrl/api/classes/$classId/summary?date=$date'));
       if (response.statusCode == 200) {
+        // если в JSON нет поля level, fromJson вернет null, и это нормально
         return ClassStatus.fromJson(jsonDecode(response.body));
       }
       return null;
@@ -70,7 +71,21 @@ class ApiService {
     }
   }
 
-  // Рекомендации
+  // получение расписания на день
+  static Future<List<dynamic>?> getSchedule(String classId, String date) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/api/classes/$classId/schedule?date=$date'));
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body); // возвращает массив
+      }
+      return null;
+    } catch (e) {
+      print('Ошибка getSchedule: $e');
+      return null;
+    }
+  }
+
+  // рекомендации
   static Future<Recommendation?> getRecommendations(String classId) async {
     try {
       final response = await http.get(Uri.parse('$baseUrl/api/classes/$classId/recommendations'));

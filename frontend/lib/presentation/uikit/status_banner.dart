@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
-// Кастомный беннер нагрузки
 class StatusBanner extends StatelessWidget {
-  final int level; // Уровень нагрузки
+  final int level; // Уровень нагрузки (0-4)
   final String date; // Дата опроса
+  final bool showButton; // Показывать ли кнопку "Перейти к сводке"
+  final VoidCallback? onGoToSummary; // Что делать при нажатии на кнопку
 
-  const StatusBanner({super.key, required this.level, required this.date});
+  const StatusBanner({super.key, required this.level, required this.date, this.showButton = true, this.onGoToSummary});
 
   @override
   Widget build(BuildContext context) {
@@ -66,7 +67,7 @@ class StatusBanner extends StatelessWidget {
             ),
             child: Icon(icon, color: cardColor, size: 50),
           ),
-          SizedBox(width: 11.fw),
+          SizedBox(width: 12.fw),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -84,22 +85,24 @@ class StatusBanner extends StatelessWidget {
                   description,
                   style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, fontWeight: .w400, color: cardColor),
                 ),
-                SizedBox(height: 15.fh),
-                SizedBox(
-                  height: 21.fh,
-                  child: ElevatedButton(
-                    onPressed: () {},
-                    style: ElevatedButton.styleFrom(
-                      padding: ps(v: 4, h: 18),
-                      backgroundColor: cardColor,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                    ),
-                    child: Text(
-                      'Перейти к сводке',
-                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: white),
+
+                if (showButton) ...[
+                  SizedBox(height: 15.fh),
+                  SizedBox(
+                    height: 20.fh,
+                    child: ElevatedButton(
+                      onPressed: onGoToSummary,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: cardColor,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                      ),
+                      child: Text(
+                        'Перейти к сводке',
+                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: white),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
