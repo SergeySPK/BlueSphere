@@ -1,0 +1,14 @@
+
+.git/
+**/.env
+**/.env.*
+!**/.env.example
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.backup
+**/*.bak
+**/node_modules/
+**/.dart_tool/
+**/build/
