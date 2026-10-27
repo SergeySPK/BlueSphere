@@ -1,6 +1,7 @@
 from datetime import date as PythonDate, datetime
 
 from sqlalchemy import (
+    Boolean,
     Date,
     DateTime,
     ForeignKey,
@@ -26,6 +27,7 @@ class School(Base):
     address: Mapped[str] = mapped_column(String(255))
     short_name: Mapped[str] = mapped_column(String(100))
     full_name: Mapped[str] = mapped_column(String(255))
+    timezone: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class AcademicYear(Base):
@@ -200,6 +202,40 @@ class Survey(Base):
     )
     date: Mapped[PythonDate] = mapped_column(Date)
     score: Mapped[int] = mapped_column(Integer)
+
+
+class SurveyDraft(Base):
+    __tablename__ = "survey_drafts"
+    __table_args__ = (
+        UniqueConstraint("student_id", "date"),
+        CheckConstraint(
+            "score IS NULL OR score BETWEEN 0 AND 4",
+            name="ck_survey_drafts_score_range",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    class_id: Mapped[str] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE")
+    )
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE")
+    )
+    date: Mapped[PythonDate] = mapped_column(Date)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class SurveySubject(Base):
+    __tablename__ = "survey_subjects"
+    __table_args__ = (
+        UniqueConstraint("survey_id", "subject_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    survey_id: Mapped[int] = mapped_column(
+        ForeignKey("surveys.id", ondelete="CASCADE")
+    )
+    subject_name: Mapped[str] = mapped_column(String(150))
 
 
 class Recommendation(Base):

@@ -28,6 +28,7 @@ def seed_database():
                 address="Тестовый адрес",
                 short_name="Школа № 1",
                 full_name="Средняя общеобразовательная школа № 1",
+                timezone="Asia/Yekaterinburg",
             )
             session.add(school)
             session.flush()
