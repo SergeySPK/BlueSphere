@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import select
 
@@ -14,7 +14,17 @@ from models import (
     User,
 )
 
-LESSON_DATES = [date(2026, 9, day) for day in range(8, 14)]
+from calendar import monthrange
+
+today = date.today()
+first_day = today.replace(day=1)
+last_day = today.replace(day=monthrange(today.year, today.month)[1])
+
+LESSON_DATES = [
+    first_day + timedelta(days=offset)
+    for offset in range((last_day - first_day).days + 1)
+    if (first_day + timedelta(days=offset)).weekday() < 5
+]
 
 TEACHERS_DATA = [
     ("demo-teacher-1", "Сидоров Сергей Сергеевич"),
@@ -184,9 +194,6 @@ def get_or_create_lesson(
         session.flush()
         return True
 
-    lesson.lesson_number = lesson_number
-    lesson.room = room
-    lesson.lesson_type = lesson_type
     return False
 
 
