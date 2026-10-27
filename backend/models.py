@@ -186,6 +186,38 @@ class Schedule(Base):
     )
 
 
+class EditingSession(Base):
+    """Активная сессия редактирования урока."""
+
+    __tablename__ = "editing_sessions"
+    __table_args__ = (
+        UniqueConstraint("schedule_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    schedule_id: Mapped[int] = mapped_column(
+        ForeignKey("schedule.id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        index=True,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class Survey(Base):
     __tablename__ = "surveys"
     __table_args__ = (
