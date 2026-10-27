@@ -98,4 +98,15 @@ class ApiService {
       return null;
     }
   }
+
+  // обновление типа урока
+  static Future<bool> updateLesson(String lessonId, String newType, String teacherSferumId) async {
+    try {
+      final response = await http.put(Uri.parse('$baseUrl/api/schedule/$lessonId'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'lesson_type': newType, 'updated_by_sferum_id': teacherSferumId}));
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Ошибка updateLesson: $e');
+      return false;
+    }
+  }
 }

@@ -18,6 +18,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
   Map<String, List<SchoolClass>>? _classes;
   bool _isLoading = true;
   String? _expandedGroup;
+  List<String> _sortedGroupNames = [];
 
   @override
   void initState() {
@@ -29,6 +30,14 @@ class _ClassesScreenState extends State<ClassesScreen> {
     final data = await ApiService.getClasses();
     setState(() {
       _classes = data;
+      if (_classes != null) {
+        _sortedGroupNames = _classes!.keys.toList()
+          ..sort((a, b) {
+            final gradeA = int.tryParse(a.split(' ').first) ?? 0;
+            final gradeB = int.tryParse(b.split(' ').first) ?? 0;
+            return gradeA.compareTo(gradeB);
+          });
+      }
       _isLoading = false;
     });
   }
@@ -48,9 +57,9 @@ class _ClassesScreenState extends State<ClassesScreen> {
                   ? const Center(child: Text('Ошибка загрузки'))
                   : ListView.builder(
                       padding: po(l: 16, r: 16, t: 8, b: 80),
-                      itemCount: _classes!.keys.length,
+                      itemCount: _sortedGroupNames.length,
                       itemBuilder: (context, index) {
-                        final groupName = _classes!.keys.elementAt(index);
+                        final groupName = _sortedGroupNames[index];
                         final classes = _classes![groupName]!;
                         return _buildAccordionGroup(groupName, classes);
                       },

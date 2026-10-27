@@ -86,12 +86,7 @@ class SurveyResultsCard extends StatelessWidget {
               Expanded(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(
-                    value: item.percentage / 100,
-                    minHeight: 12,
-                    backgroundColor: results, // Серый фон
-                    valueColor: AlwaysStoppedAnimation<Color>(barColor),
-                  ),
+                  child: LinearProgressIndicator(value: item.percentage / 100, minHeight: 12, backgroundColor: results, valueColor: AlwaysStoppedAnimation<Color>(barColor)),
                 ),
               ),
               SizedBox(width: 12.fw),

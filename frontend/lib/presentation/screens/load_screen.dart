@@ -78,7 +78,7 @@ class _LoadScreenState extends State<LoadScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс', onClose: widget.onGoToClasses, onMenu: () {}),
+            CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс', onClose: () {}, onMenu: () {}),
             Expanded(
               child: !isClassSelected
                   ? _buildNoClassSelected()

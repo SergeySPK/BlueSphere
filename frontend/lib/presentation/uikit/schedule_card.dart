@@ -13,27 +13,16 @@ class LessonData {
 class ScheduleCard extends StatelessWidget {
   final String day;
   final String month;
+  final String weekday;
   final List<LessonData> lessons;
   final Color statusColor;
   final Function(LessonData)? onEditLesson;
+  final int? editingLessonNumber;
 
-  const ScheduleCard({super.key, required this.day, required this.month, required this.lessons, required this.statusColor, this.onEditLesson});
-
-  // Функция для получения названия дня недели
-  String _getWeekdayName(int dayNumber) {
-    final now = DateTime.now();
-    final months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
-    int monthNumber = months.indexWhere((m) => m.toLowerCase() == month.toLowerCase()) + 1;
-    if (monthNumber == 0) monthNumber = now.month;
-    final date = DateTime(now.year, monthNumber, dayNumber);
-    final weekdays = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
-    return weekdays[date.weekday - 1];
-  }
+  const ScheduleCard({super.key, required this.day, required this.month, required this.weekday, required this.lessons, required this.statusColor, this.onEditLesson, this.editingLessonNumber});
 
   @override
   Widget build(BuildContext context) {
-    final weekdayName = _getWeekdayName(int.parse(day));
-
     return Container(
       padding: pa(16),
       decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
@@ -62,7 +51,7 @@ class ScheduleCard extends StatelessWidget {
                     style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w700, color: statusColor),
                   ),
                   Text(
-                    weekdayName,
+                    weekday,
                     style: TextStyle(fontFamily: 'SF Pro', fontSize: 12, fontWeight: .w400, color: text),
                   ),
                 ],
@@ -70,58 +59,102 @@ class ScheduleCard extends StatelessWidget {
             ],
           ),
           SizedBox(height: 16.fh),
-          ...lessons.map((lesson) {
-            return Container(
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: statusColor.withOpacity(0.5), width: 1)),
+          if (lessons.isEmpty)
+            Padding(
+              padding: po(t: 16, b: 16),
+              child: Center(
+                child: Text(
+                  'Нет уроков на этот день',
+                  style: TextStyle(fontFamily: 'SF Pro', fontSize: 14, color: text),
+                ),
               ),
-              padding: po(t: 12, b: 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: RichText(
-                      text: TextSpan(
+            )
+          else
+            ...lessons.map((lesson) {
+              final isEditing = lesson.number == editingLessonNumber;
+              return Padding(
+                padding: po(b: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: po(t: 4),
+                          child: Text(
+                            '${lesson.number}. ',
+                            style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w500, color: Color(0xff7D7D7D)),
+                          ),
+                        ),
+                        Expanded(
+                          child: Container(
+                            padding: po(t: 4, b: 4, l: 8, r: 8),
+                            decoration: BoxDecoration(
+                              color: isEditing ? loadHigh.withOpacity(0.15) : Colors.transparent,
+                              border: isEditing
+                                  ? Border(
+                                      left: BorderSide(color: loadHigh, width: 2),
+                                      right: BorderSide(color: loadHigh, width: 2),
+                                    )
+                                  : null,
+                            ),
+                            child: RichText(
+                              text: TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: '${lesson.subject}. ',
+                                    style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w400, color: black),
+                                  ),
+                                  TextSpan(
+                                    text: lesson.type,
+                                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 14, fontWeight: .w400, color: black),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: 12.fw),
+                        GestureDetector(
+                          onTap: () {
+                            if (onEditLesson != null) onEditLesson!(lesson);
+                          },
+                          child: Container(
+                            width: 26,
+                            height: 26,
+                            decoration: BoxDecoration(color: loadMax, borderRadius: BorderRadius.circular(4)),
+                            child: Icon(Icons.edit_outlined, color: Colors.white, size: 18),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    if (isEditing)
+                      Row(
                         children: [
-                          TextSpan(
-                            text: '${lesson.number}. ',
-                            style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w500, color: black),
-                          ),
-                          TextSpan(
-                            text: '${lesson.subject}. ',
-                            style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w400, color: black),
-                          ),
-                          TextSpan(
-                            text: lesson.type,
-                            style: TextStyle(fontFamily: 'SF Pro', fontSize: 14, fontWeight: .w400, color: black),
+                          Spacer(),
+                          Padding(
+                            padding: ps(h: 30),
+                            child: Container(
+                              decoration: BoxDecoration(color: loadHigh),
+                              child: Text(
+                                'Анастасия Алексеевна Иванова', // пока хардкод
+                                style: TextStyle(fontFamily: 'SF Pro', fontSize: 8, fontWeight: .w400, color: white),
+                              ),
+                            ),
                           ),
                         ],
                       ),
+                    Padding(
+                      padding: po(t: 8),
+                      child: Divider(color: text.withOpacity(0.3), height: 1),
                     ),
-                  ),
-                  SizedBox(width: 12.fw),
-                  GestureDetector(
-                    onTap: () {
-                      if (onEditLesson != null) onEditLesson!(lesson);
-                    },
-                    child: Container(
-                      width: 26,
-                      height: 26,
-                      decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(4)),
-                      child: Icon(Icons.edit_outlined, color: Colors.white, size: 18),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
-          SizedBox(height: 8.fh),
-          Center(
-            child: Text(
-              '${lessons.length} уроков: ${lessons.where((l) => l.type != 'Обычный урок').length} работы',
-              style: TextStyle(fontFamily: 'SF Pro', fontSize: 12, fontWeight: .w400, color: text),
-            ),
-          ),
+                  ],
+                ),
+              );
+            }),
+          SizedBox(height: 15.fh),
         ],
       ),
     );
