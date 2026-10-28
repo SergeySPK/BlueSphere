@@ -1,10 +1,10 @@
 from datetime import date as PythonDate, datetime, timedelta, timezone
 import calendar
 
-from fastapi import FastAPI, Depends, HTTPException, Response, status
+from fastapi import FastAPI, Depends, HTTPException, Response, status, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.exc import IntegrityError
 
@@ -12,6 +12,7 @@ from database import SessionLocal
 from models import (
     AcademicYear,
     Administrator,
+    AuthTicket,
     Class,
     EditingSession,
     Recommendation,
@@ -29,6 +30,7 @@ from typing import List, Dict, Optional
 
 import hashlib
 import jwt
+import secrets
 import hmac
 import json
 import os
@@ -38,7 +40,7 @@ from urllib.parse import parse_qsl
 app = FastAPI(title="Blue Sphere API", docs_url="/docs", redoc_url=None)
 
 JWT_ALGORITHM = "HS256"
-JWT_ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60
+JWT_ACCESS_TOKEN_EXPIRE_SECONDS = 60 * 60
 JWT_ISSUER = "blue-sphere-api"
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -134,11 +136,11 @@ def get_current_user(
 
 
 # Разрешённые адреса Flutter-приложения.
-# На хостинге FRONTEND_ORIGINS задаётся через переменные окружения.
+# На хостинге API_BASE_URL задаётся через переменные окружения.
 allowed_origins = [
     origin.strip()
     for origin in os.getenv(
-        "FRONTEND_ORIGINS",
+        "API_BASE_URL",
     ).split(",")
     if origin.strip()
 ]
@@ -187,6 +189,24 @@ class AuthResponse(UserProfile):
 
 class AuthRequest(BaseModel):
     init_data: str
+
+
+class AuthTicketCreateRequest(BaseModel):
+    max_user_id: str = Field(min_length=1, max_length=100)
+
+
+class AuthTicketCreateResponse(BaseModel):
+    ticket: str
+    expires_in: int
+
+
+class AuthTicketExchangeRequest(BaseModel):
+    ticket: str = Field(min_length=1, max_length=200)
+
+
+class AuthTicketExchangeResponse(AuthResponse):
+    pass
+
 
 # Модели для работы с расписанием дня
 class Lesson(BaseModel):
@@ -341,25 +361,8 @@ async def root():
 
 
 
-@app.post("/api/auth", response_model=AuthResponse)
-async def auth_user(
-    request: AuthRequest,
-    db: Session = Depends(get_db),
-):
-    # Сначала проверяем подлинность данных, полученных от MAX.
-    verified_user = validate_max_init_data(request.init_data)
-    sferum_id = verified_user["sferum_id"]
-
-    # Вход через MAX не означает автоматическую регистрацию.
-    user = db.scalar(
-        select(User).where(User.sferum_id == sferum_id)
-    )
-
-    if user is None:
-        raise HTTPException(
-            status_code=403,
-            detail="Пользователь не зарегистрирован в Blue Sphere",
-        )
+def build_auth_response(user: User, db: Session) -> AuthResponse:
+    """Формирует профиль пользователя и выдаёт JWT."""
 
     roles = []
     class_ids = set()
@@ -416,6 +419,146 @@ async def auth_user(
 
 
 
+@app.post("/api/auth", response_model=AuthResponse)
+async def auth_user(
+    request: AuthRequest,
+    db: Session = Depends(get_db),
+):
+    verified_user = validate_max_init_data(request.init_data)
+    sferum_id = verified_user["sferum_id"]
+
+    user = db.scalar(
+        select(User).where(User.sferum_id == sferum_id)
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Пользователь не зарегистрирован в Blue Sphere",
+        )
+
+    return build_auth_response(user, db)
+
+
+
+AUTH_TICKET_EXPIRE_SECONDS = 60
+
+
+@app.post(
+    "/api/auth/ticket",
+    response_model=AuthTicketCreateResponse,
+)
+def create_auth_ticket(
+    request: AuthTicketCreateRequest,
+    x_bot_secret: Optional[str] = Header(
+        default=None,
+        alias="X-Bot-Secret",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Создаёт одноразовый билет для доверенного бота."""
+
+    expected_secret = os.getenv("BOT_INTERNAL_SECRET")
+
+    if (
+        not expected_secret
+        or not x_bot_secret
+        or not hmac.compare_digest(x_bot_secret, expected_secret)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав",
+        )
+
+    user = db.scalar(
+        select(User).where(User.sferum_id == request.max_user_id)
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Пользователь не зарегистрирован в Blue Sphere",
+        )
+
+    raw_ticket = secrets.token_urlsafe(32)
+    ticket_hash = hashlib.sha256(raw_ticket.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+
+    ticket_record = AuthTicket(
+        ticket_hash=ticket_hash,
+        user_id=user.id,
+        expires_at=now + timedelta(seconds=AUTH_TICKET_EXPIRE_SECONDS),
+    )
+
+    try:
+        db.add(ticket_record)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Не удалось создать билет авторизации",
+        )
+
+    return AuthTicketCreateResponse(
+        ticket=raw_ticket,
+        expires_in=AUTH_TICKET_EXPIRE_SECONDS,
+    )
+
+
+@app.post(
+    "/api/auth/ticket/exchange",
+    response_model=AuthTicketExchangeResponse,
+)
+def exchange_auth_ticket(
+    request: AuthTicketExchangeRequest,
+    db: Session = Depends(get_db),
+):
+    """Однократно обменивает билет на JWT."""
+
+    ticket_hash = hashlib.sha256(
+        request.ticket.encode("utf-8")
+    ).hexdigest()
+
+    now = datetime.now(timezone.utc)
+
+    # Одно атомарное обновление не позволяет погасить билет дважды.
+    result = db.execute(
+        update(AuthTicket)
+        .where(
+            AuthTicket.ticket_hash == ticket_hash,
+            AuthTicket.used_at.is_(None),
+            AuthTicket.expires_at > now,
+        )
+        .values(used_at=now)
+        .returning(AuthTicket.user_id)
+    )
+
+    user_id = result.scalar_one_or_none()
+
+    if user_id is None:
+        db.rollback()
+        raise HTTPException(
+            status_code=401,
+            detail="Билет недействителен, истёк или уже использован",
+        )
+
+    user = db.get(User, user_id)
+
+    if user is None:
+        db.rollback()
+        raise HTTPException(
+            status_code=401,
+            detail="Пользователь не найден",
+        )
+
+    # Сначала фиксируем погашение билета в БД.
+    db.commit()
+
+    return build_auth_response(user, db)
+
+
+
 @app.get("/api/classes", response_model=Dict[str, List[SchoolClass]])
 def get_classes(db: Session = Depends(get_db)):
     """
@@ -449,7 +592,6 @@ def get_classes(db: Session = Depends(get_db)):
         )
 
     return result
-
 
 
 def get_daily_lesson_counts(
@@ -833,6 +975,11 @@ def update_lesson(
     
     lesson.lesson_type = request.lesson_type
     lesson.updated_by_user_id = editor.id
+
+    # Продлеваем сессию после успешного изменения урока.
+    editing_session.expires_at = now + timedelta(
+        seconds=EDITING_SESSION_TTL_SECONDS
+    )
 
     db.commit()
     db.refresh(lesson)
