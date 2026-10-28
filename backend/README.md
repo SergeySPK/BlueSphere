@@ -37,7 +37,11 @@ pip install .
 ```dotenv
 DATABASE_URL=postgresql+psycopg://ПОЛЬЗОВАТЕЛЬ:ПАРОЛЬ@ХОСТ:5432/ИМЯ_БАЗЫ?sslmode=require
 BOT_TOKEN=ТОКЕН_БОТА
-FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+API_BASE_URL=https://АДРЕС_BACKEND_API
+JWT_SECRET_KEY=СЛУЧАЙНЫЙ_СЕКРЕТНЫЙ_КЛЮЧ
+FRONTEND_URL=https://АДРЕС_ОПУБЛИКОВАННОГО_ПРИЛОЖЕНИЯ/
+FRONTEND_ENABLED=false
+BOT_INTERNAL_SECRET=ОТДЕЛЬНЫЙ_СЕКРЕТ_ДЛЯ_СВЯЗИ_БОТА_С_API
 ```
 
 Замените примеры на свои значения. Не добавляйте `.env` в Git и не публикуйте токен бота или пароль базы данных.
@@ -93,7 +97,7 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 docker build -t bluesphere-backend ./backend
 ```
 
-Для запуска контейнера необходимо передать ему переменные окружения `DATABASE_URL` и `BOT_TOKEN`. При необходимости также задайте `FRONTEND_ORIGINS`.
+Для запуска контейнера необходимо передать ему переменные окружения `DATABASE_URL` и `BOT_TOKEN`. При необходимости также задайте `API_BASE_URL`.
 
 Пример запуска:
 
@@ -101,7 +105,7 @@ docker build -t bluesphere-backend ./backend
 docker run --rm -p 3000:3000 \
   -e DATABASE_URL \
   -e BOT_TOKEN \
-  -e FRONTEND_ORIGINS \
+  -e API_BASE_URL \
   bluesphere-backend
 ```
 
