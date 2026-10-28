@@ -1,4 +1,7 @@
+
 from pathlib import Path
+from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
+
 from sqlalchemy import select
 
 from database import SessionLocal
@@ -8,9 +11,12 @@ import asyncio
 import logging
 import os
 
+import httpx
 from dotenv import load_dotenv
 from maxapi import Bot, Dispatcher
 from maxapi.types import CommandStart, MessageCreated
+from maxapi.utils.inline_keyboard import InlineKeyboardBuilder
+from maxapi.types.attachments.buttons import LinkButton
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -20,6 +26,11 @@ logger = logging.getLogger(__name__)
 token = os.getenv("BOT_TOKEN")
 if not token:
     raise RuntimeError("В backend/.env не найден BOT_TOKEN")
+
+API_BASE_URL = os.getenv("API_BASE_URL", "").rstrip("/")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()
+BOT_INTERNAL_SECRET = os.getenv("BOT_INTERNAL_SECRET", "")
+FRONTEND_ENABLED = os.getenv("FRONTEND_ENABLED", "false").strip().lower() == "true"
 
 bot = Bot(token=token)
 dp = Dispatcher()
@@ -71,6 +82,102 @@ def get_user_profile(max_user_id: int):
         db.close()
 
 
+def build_frontend_ticket_url(frontend_url: str, ticket: str) -> str | None:
+    """Добавляет билет к адресу приложения, если URL выглядит настроенным."""
+    parsed = urlparse(frontend_url)
+
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.hostname in {"example.com", "localhost"}
+    ):
+        return None
+
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["ticket"] = ticket
+
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+async def create_auth_ticket(max_user_id: int) -> str | None:
+    """Запрашивает у backend одноразовый билет авторизации."""
+    if not API_BASE_URL or not BOT_INTERNAL_SECRET:
+        logger.error("Не настроены API_BASE_URL или BOT_INTERNAL_SECRET")
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{API_BASE_URL}/api/auth/ticket",
+                headers={"X-Bot-Secret": BOT_INTERNAL_SECRET},
+                json={"max_user_id": str(max_user_id)},
+            )
+
+        if response.status_code != 200:
+            logger.error(
+                "Backend не выдал билет авторизации: HTTP %s",
+                response.status_code,
+            )
+            return None
+
+        data = response.json()
+        ticket = data.get("ticket")
+
+        if not isinstance(ticket, str) or not ticket:
+            logger.error("Backend вернул некорректный билет авторизации")
+            return None
+
+        return ticket
+
+    except (httpx.HTTPError, ValueError):
+        logger.exception("Ошибка при запросе билета авторизации")
+        return None
+
+
+async def send_app_button(event: MessageCreated, max_user_id: int):
+    """Выдаёт билет и отправляет кнопку перехода в приложение."""
+    if not FRONTEND_ENABLED:
+        await event.message.answer(
+            "Ваш аккаунт подтверждён, но сайт Blue Sphere "
+            "ещё не опубликовано. Попробуйте позже."
+        )
+        return
+    frontend_url = build_frontend_ticket_url(FRONTEND_URL, "placeholder")
+
+    if frontend_url is None:
+        await event.message.answer(
+            "Ваш аккаунт подтверждён, но сайт Blue Sphere ещё не настроен. "
+            "Попробуйте позже."
+        )
+        return
+
+    ticket = await create_auth_ticket(max_user_id)
+
+    if ticket is None:
+        await event.message.answer(
+            "Не удалось подготовить вход в Blue Sphere. "
+            "Попробуйте позже."
+        )
+        return
+
+    app_url = build_frontend_ticket_url(FRONTEND_URL, ticket)
+    if app_url is None:
+        await event.message.answer(
+            "Ссылка на приложение настроена некорректно. "
+            "Обратитесь к администратору."
+        )
+        return
+
+    keyboard = InlineKeyboardBuilder().add(
+        LinkButton(text="Открыть Blue Sphere", url=app_url)
+    ).as_markup()
+
+    await event.message.answer(
+        "Ваш аккаунт подтверждён. Нажмите кнопку, чтобы открыть Blue Sphere.",
+        attachments=[keyboard],
+    )
+
+
 @dp.message_created(CommandStart())
 async def start_handler(event: MessageCreated):
     sender = event.message.sender
@@ -92,31 +199,14 @@ async def start_handler(event: MessageCreated):
 
     roles = profile["roles"]
 
-    if "teacher" in roles:
+    if not roles:
         await event.message.answer(
-            "Здравствуйте! Вы учитель.\n"
-            "Управление нагрузкой доступно в приложении Blue Sphere."
+            "Ваш аккаунт найден, но для него не назначена роль. "
+            "Обратитесь к администратору."
         )
         return
 
-    if "student" in roles:
-        name = profile["full_name"] or sender.first_name
-        await event.message.answer(
-            f"Привет, {name}!\n"
-            "Здесь ты сможешь проходить опросы о школьной нагрузке."
-        )
-        return
-
-    if "admin" in roles:
-        await event.message.answer(
-            "Здравствуйте! Вы администратор Blue Sphere."
-        )
-        return
-
-    await event.message.answer(
-        "Ваш аккаунт найден, но для него не назначена роль. "
-        "Обратитесь к администратору."
-    )
+    await send_app_button(event, sender.user_id)
 
 
 async def main():
