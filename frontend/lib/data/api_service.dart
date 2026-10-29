@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter_max_miniapp/flutter_max_miniapp.dart';
 import 'package:http/http.dart' as http;
 import '../domain/school_class.dart';
 import '../domain/load_day.dart';
@@ -9,10 +10,22 @@ class ApiService {
   static const String baseUrl = 'https://blue-sphere-bot.bothost.tech';
 
   // получение роли
-  static Future<Map<String, dynamic>?> auth(String initData) async {
+  static Future<Map<String, dynamic>?> auth() async {
     try {
-      final response = await http.post(Uri.parse('$baseUrl/api/auth'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'init_data': initData}));
-      if (response.statusCode == 200) return jsonDecode(response.body);
+      // Получаем строку initData прямо из библиотеки MAX
+      final initData = MaxWebApp().initData;
+      if (initData == null || initData.isEmpty) {
+        print('initData пустой (мы не в MAX)');
+        return null;
+      }
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/auth'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'init_data': initData}), // Отправляем её
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body); // Тут вернется JWT токен и роль
+      }
       return null;
     } catch (e) {
       print('Ошибка auth: $e');
@@ -102,11 +115,51 @@ class ApiService {
   // обновление типа урока
   static Future<bool> updateLesson(String lessonId, String newType, String teacherSferumId) async {
     try {
-      final response = await http.put(Uri.parse('$baseUrl/api/schedule/$lessonId'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'lesson_type': newType, 'updated_by_sferum_id': teacherSferumId}));
-      return response.statusCode == 200;
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/schedule/$lessonId'),
+        headers: {
+          'Content-Type': 'application/json',
+          // 'Authorization': 'Bearer $token', // раскомментим, когда будет токен
+        },
+        body: jsonEncode({'lesson_type': newType, 'updated_by_sferum_id': teacherSferumId}),
+      );
+
+      if (response.statusCode == 200) {
+        return true;
+      } else {
+        print('Сервер вернул ошибку: ${response.statusCode}');
+        return false;
+      }
     } catch (e) {
-      print('Ошибка updateLesson: $e');
+      print('Ошибка сети updateLesson: $e');
       return false;
+    }
+  }
+
+  // начать редактирование
+  static Future<void> startEditing(String lessonId) async {
+    try {
+      await http.post(Uri.parse('$baseUrl/api/schedule/$lessonId/editing'));
+    } catch (e) {
+      print('Ошибка startEditing: $e');
+    }
+  }
+
+  // продлить редактирование
+  static Future<void> renewEditing(String lessonId) async {
+    try {
+      await http.put(Uri.parse('$baseUrl/api/schedule/$lessonId/editing'));
+    } catch (e) {
+      print('Ошибка renewEditing: $e');
+    }
+  }
+
+  // закончить редактирование
+  static Future<void> stopEditing(String lessonId) async {
+    try {
+      await http.delete(Uri.parse('$baseUrl/api/schedule/$lessonId/editing'));
+    } catch (e) {
+      print('Ошибка stopEditing: $e');
     }
   }
 }

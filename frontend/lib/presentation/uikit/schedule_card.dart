@@ -18,8 +18,9 @@ class ScheduleCard extends StatelessWidget {
   final Color statusColor;
   final Function(LessonData)? onEditLesson;
   final int? editingLessonNumber;
+  final Color editingColor;
 
-  const ScheduleCard({super.key, required this.day, required this.month, required this.weekday, required this.lessons, required this.statusColor, this.onEditLesson, this.editingLessonNumber});
+  const ScheduleCard({super.key, required this.day, required this.month, required this.weekday, required this.lessons, required this.statusColor, this.onEditLesson, this.editingLessonNumber, required this.editingColor});
 
   @override
   Widget build(BuildContext context) {
@@ -32,13 +33,13 @@ class ScheduleCard extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(8)),
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(5)),
                 child: Center(
                   child: Text(
                     day,
-                    style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w700, color: white),
+                    style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w400, color: white),
                   ),
                 ),
               ),
@@ -48,11 +49,11 @@ class ScheduleCard extends StatelessWidget {
                 children: [
                   Text(
                     month.toUpperCase(),
-                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w700, color: statusColor),
+                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 24, fontWeight: .w700, color: statusColor),
                   ),
                   Text(
                     weekday,
-                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 12, fontWeight: .w400, color: text),
+                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w400, color: text),
                   ),
                 ],
               ),
@@ -72,6 +73,7 @@ class ScheduleCard extends StatelessWidget {
           else
             ...lessons.map((lesson) {
               final isEditing = lesson.number == editingLessonNumber;
+              final hColor = editingColor;
               return Padding(
                 padding: po(b: 16),
                 child: Column(
@@ -91,11 +93,11 @@ class ScheduleCard extends StatelessWidget {
                           child: Container(
                             padding: po(t: 4, b: 4, l: 8, r: 8),
                             decoration: BoxDecoration(
-                              color: isEditing ? loadHigh.withOpacity(0.15) : Colors.transparent,
+                              color: isEditing ? hColor.withOpacity(0.6) : Colors.transparent,
                               border: isEditing
                                   ? Border(
-                                      left: BorderSide(color: loadHigh, width: 2),
-                                      right: BorderSide(color: loadHigh, width: 2),
+                                      left: BorderSide(color: hColor, width: 2),
+                                      right: BorderSide(color: hColor, width: 2),
                                     )
                                   : null,
                             ),
@@ -137,7 +139,7 @@ class ScheduleCard extends StatelessWidget {
                           Padding(
                             padding: ps(h: 30),
                             child: Container(
-                              decoration: BoxDecoration(color: loadHigh),
+                              decoration: BoxDecoration(color: hColor),
                               child: Text(
                                 'Анастасия Алексеевна Иванова', // пока хардкод
                                 style: TextStyle(fontFamily: 'SF Pro', fontSize: 8, fontWeight: .w400, color: white),

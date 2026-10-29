@@ -63,7 +63,7 @@ class _LoadScreenState extends State<LoadScreen> {
 
     if (mounted) {
       setState(() {
-        _loadDays = results[0] as List<LoadDay>?;
+        _loadDays = (results[0] as List<LoadDay>?) ?? [];
         _status = results[1] as ClassStatus?;
         _recommendation = results[2] as Recommendation?;
         _isLoading = false;
@@ -83,7 +83,7 @@ class _LoadScreenState extends State<LoadScreen> {
               child: !isClassSelected
                   ? _buildNoClassSelected()
                   : _isLoading
-                  ? Center(child: CircularProgressIndicator())
+                  ? const Center(child: CircularProgressIndicator())
                   : SingleChildScrollView(
                       padding: po(t: 8, l: 16, r: 16, b: 80),
                       child: Column(
@@ -96,33 +96,35 @@ class _LoadScreenState extends State<LoadScreen> {
                           else
                             StatusBanner(level: _status!.level ?? 4, date: _status!.date ?? '', showButton: true, onGoToSummary: widget.onGoToSummary),
                           SizedBox(height: 16.fh),
-                          if (_loadDays != null)
-                            LoadCalendar(
-                              date: DateTime.now(),
-                              loadDays: _loadDays!,
-                              onDayTap: (day) {
-                                final now = DateTime.now();
-                                final months = ['Января', 'Февраля', 'Марта', 'Апреля', 'Мая', 'Июня', 'Июля', 'Августа', 'Сентября', 'Октября', 'Ноября', 'Декабря'];
-                                final currentMonth = months[now.month - 1];
-                                final currentMonthNumber = now.month.toString();
-                                final dayData = _loadDays!.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: 4));
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => DayDetailsScreen(
-                                      day: day,
-                                      monthName: currentMonth,
-                                      monthNumber: currentMonthNumber,
-                                      className: widget.className,
-                                      classId: widget.classId,
-                                      dayLevel: dayData.level,
-                                      bannerLevel: _status?.level ?? 4,
-                                      statusDate: _status?.date ?? '',
-                                    ),
+                          LoadCalendar(
+                            date: DateTime.now(),
+                            loadDays: _loadDays ?? [],
+                            onDayTap: (day) {
+                              final now = DateTime.now();
+                              final months = ['Января', 'Февраля', 'Марта', 'Апреля', 'Мая', 'Июня', 'Июля', 'Августа', 'Сентября', 'Октября', 'Ноября', 'Декабря'];
+                              final currentMonth = months[now.month - 1];
+                              final currentMonthNumber = now.month.toString();
+
+                              // Ищем данные дня (если нет, ставим level 4)
+                              final dayData = _loadDays!.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: 4));
+
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => DayDetailsScreen(
+                                    day: day,
+                                    monthName: currentMonth,
+                                    monthNumber: currentMonthNumber,
+                                    className: widget.className,
+                                    classId: widget.classId,
+                                    dayLevel: dayData.level,
+                                    bannerLevel: _status?.level ?? 4,
+                                    statusDate: _status?.date ?? '',
                                   ),
-                                );
-                              },
-                            ),
+                                ),
+                              );
+                            },
+                          ),
                           SizedBox(height: 16.fh),
                           if (_recommendation != null) RecommendationsBlock(daysToReduce: _recommendation!.daysToReduce, daysToMoveTo: _recommendation!.daysToMoveTo),
                         ],

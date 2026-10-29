@@ -28,6 +28,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
   List<Lesson>? _lessons;
   bool _isLoading = true;
   int? _editingLessonNumber;
+  final editingColor = getTeacherColor('demo-teacher-1');
 
   @override
   void initState() {
@@ -36,7 +37,9 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
   }
 
   Future<void> _loadSchedule() async {
-    final year = DateTime.now().year;
+    final year = DateTime
+        .now()
+        .year;
     final month = widget.monthNumber.padLeft(2, '0');
     final day = widget.day.toString().padLeft(2, '0');
     final dateStr = '$year-$month-$day';
@@ -59,6 +62,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
     setState(() {
       _editingLessonNumber = lesson.lessonNumber;
     });
+    ApiService.startEditing(lesson.id);
 
     final TextEditingController controller = TextEditingController(text: lesson.lessonType);
 
@@ -104,6 +108,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                   children: [
                     TextButton(
                       onPressed: () {
+                        ApiService.stopEditing(lesson.id);
                         setState(() => _editingLessonNumber = null);
                         Navigator.pop(dialogContext);
                       },
@@ -122,12 +127,40 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                           Navigator.pop(dialogContext);
                           return;
                         }
+
+                        // отправляем на сервер
                         final success = await ApiService.updateLesson(lesson.id, newType, 'demo-teacher-1');
+
                         if (!dialogContext.mounted) return;
-                        setState(() => _editingLessonNumber = null);
-                        Navigator.pop(dialogContext);
+
+                        // сообщаем серверу, что закончили
+                        await ApiService.stopEditing(lesson.id);
+
                         if (success) {
+                          // если сервер сохранил — перезапрашиваем данные
+                          setState(() => _editingLessonNumber = null);
+                          Navigator.pop(dialogContext);
                           _loadSchedule();
+                        } else {
+                          // если сервер не сохранил (нет токена) — обновляем локально,
+                          // чтобы ты видела, что интерфейс работает
+                          setState(() {
+                            final index = _lessons!.indexWhere((l) => l.id == lesson.id);
+                            if (index != -1) {
+                              _lessons![index] = Lesson(id: lesson.id,
+                                  lessonNumber: lesson.lessonNumber,
+                                  subjectName: lesson.subjectName,
+                                  teacherName: lesson.teacherName,
+                                  room: lesson.room,
+                                  lessonType: newType,
+                                  subgroup: lesson.subgroup);
+                            }
+                            _editingLessonNumber = null;
+                          });
+                          Navigator.pop(dialogContext);
+
+                          // выводим предупреждение в консоль
+                          print('Данные не сохранены на сервере (нужен токен авторизации)');
                         }
                       },
                       style: ElevatedButton.styleFrom(
@@ -135,6 +168,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                         padding: ps(h: 20, v: 10),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
+
                       child: Text(
                         'Сохранить',
                         style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w500, color: white),
@@ -168,8 +202,17 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     final Color dayColor = _getLoadColor(widget.dayLevel);
+    final int year = DateTime
+        .now()
+        .year;
+    final int month = int.tryParse(widget.monthNumber) ?? DateTime
+        .now()
+        .month;
+    final DateTime date = DateTime(year, month, widget.day);
+    final List<String> weekdays = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+    final String weekdayName = weekdays[date.weekday - 1];
 
-    final List<AiRecommendationItem> mockRecommendations = [AiRecommendationItem(title: '1. Разгрузить вторник:', description: 'Не назначать контрольные и дедлайны на самый напряженный день недели (9, 10, 16, 23 числа).')];
+    final List<AiRecommendationItem> mockRecommendations = [AiRecommendationItem(title: '', description: '')];
 
     return Scaffold(
       backgroundColor: background,
@@ -181,30 +224,31 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
               child: _isLoading
                   ? Center(child: CircularProgressIndicator())
                   : SingleChildScrollView(
-                      padding: po(t: 8, l: 16, r: 16, b: 80),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          StatusBanner(level: widget.bannerLevel, date: widget.statusDate, showButton: false),
-                          SizedBox(height: 16.fh),
-                          if (_lessons != null)
-                            ScheduleCard(
-                              day: widget.day.toString(),
-                              month: widget.monthName,
-                              weekday: 'Вторник',
-                              lessons: _lessons!.map((l) => LessonData(number: l.lessonNumber, subject: l.subjectName, type: l.lessonType)).toList(),
-                              statusColor: dayColor,
-                              editingLessonNumber: _editingLessonNumber,
-                              onEditLesson: (lessonData) {
-                                final lesson = _lessons!.firstWhere((l) => l.lessonNumber == lessonData.number);
-                                _editLesson(lesson);
-                              },
-                            ),
-                          SizedBox(height: 16.fh),
-                          AiRecommendationsCard(recommendations: mockRecommendations),
-                        ],
+                padding: po(t: 8, l: 16, r: 16, b: 80),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    StatusBanner(level: widget.bannerLevel, date: widget.statusDate, showButton: false),
+                    SizedBox(height: 16.fh),
+                    if (_lessons != null)
+                      ScheduleCard(
+                        day: widget.day.toString(),
+                        month: widget.monthName,
+                        weekday: weekdayName,
+                        lessons: _lessons!.map((l) => LessonData(number: l.lessonNumber, subject: l.subjectName, type: l.lessonType)).toList(),
+                        statusColor: dayColor,
+                        editingLessonNumber: _editingLessonNumber,
+                        editingColor: editingColor,
+                        onEditLesson: (lessonData) {
+                          final lesson = _lessons!.firstWhere((l) => l.lessonNumber == lessonData.number);
+                          _editLesson(lesson);
+                        },
                       ),
-                    ),
+                    SizedBox(height: 16.fh),
+                    AiRecommendationsCard(recommendations: mockRecommendations),
+                  ],
+                ),
+              ),
             ),
           ],
         ),

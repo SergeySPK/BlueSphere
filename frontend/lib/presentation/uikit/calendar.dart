@@ -136,7 +136,7 @@ class LoadCalendar extends StatelessWidget {
     return GestureDetector(
       onTap: () {
         if (onDayTap != null) {
-          onDayTap!(dayData.day); // Передаем номер дня наружу
+          onDayTap!(dayData.day);
         }
       },
       child: Container(

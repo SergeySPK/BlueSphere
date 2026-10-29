@@ -70,50 +70,53 @@ class ClassSummaryCard extends StatelessWidget {
             ],
           ),
           SizedBox(height: 20.fh),
-          Row(
+          Column(
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              // Самый тревожный
+              Container(
+                padding: pa(8),
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Самый тревожный урок\nна сегодня:',
-                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: black),
+                    Expanded(
+                      child: Text(
+                        'Самый тревожный урок\nна сегодня:',
+                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: black, fontWeight: .w500),
+                      ),
                     ),
-                    SizedBox(height: 16.fh),
                     Text(
-                      'Самый легкий урок\nна сегодня:',
-                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: black),
+                      hardestSubject,
+                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 18, fontWeight: .w600, color: loadMax),
                     ),
                   ],
                 ),
               ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+
+              SizedBox(height: 8.fh),
+
+              // Самый легкий
+              Container(
+                padding: pa(8),
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Container(
-                      padding: ps(v: 6),
-                      width: 171.fw,
-                      decoration: BoxDecoration(color: loadMax, borderRadius: BorderRadius.circular(8)),
-                      child: Center(
-                        child: Text(
-                          hardestSubject,
-                          style: TextStyle(fontFamily: 'SF Pro', fontSize: 12, fontWeight: .w500, color: white),
-                        ),
+                    Expanded(
+                      child: Text(
+                        'Самый легкий урок\nна сегодня:',
+                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: black, fontWeight: .w500),
                       ),
                     ),
-                    SizedBox(height: 11.fh),
-                    Container(
-                      padding: ps(v: 6),
-                      width: 171.fw,
-                      decoration: BoxDecoration(color: loadMax, borderRadius: BorderRadius.circular(8)),
-                      child: Center(
-                        child: Text(
-                          easiestSubject,
-                          style: TextStyle(fontFamily: 'SF Pro', fontSize: 12, fontWeight: .w500, color: white),
-                        ),
-                      ),
+                    Text(
+                      easiestSubject,
+                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 18, fontWeight: .w600, color: loadMax),
                     ),
                   ],
                 ),
