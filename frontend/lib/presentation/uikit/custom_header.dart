@@ -13,7 +13,7 @@ class CustomHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: po(l: 14, r: 14, t: 25, b: 12),
+      padding: po(l: 14, r: 14, t: 13, b: 11),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [

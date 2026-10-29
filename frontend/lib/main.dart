@@ -6,6 +6,7 @@ import 'package:blue_sphere/presentation/uikit/bottom_nav_bar.dart';
 import 'package:blue_sphere/presentation/uikit/colors.dart';
 import 'package:vize/vize.dart';
 import 'package:flutter_max_miniapp/flutter_max_miniapp.dart';
+import 'package:blue_sphere/data/api_service.dart';
 
 // Точка входа в приложение
 void main() async {

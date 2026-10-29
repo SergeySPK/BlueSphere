@@ -6,8 +6,9 @@ class LessonData {
   final int number;
   final String subject;
   final String type;
+  final String teacherName;
 
-  LessonData({required this.number, required this.subject, required this.type});
+  LessonData({required this.number, required this.subject, required this.type, required this.teacherName});
 }
 
 class ScheduleCard extends StatelessWidget {
@@ -141,7 +142,7 @@ class ScheduleCard extends StatelessWidget {
                             child: Container(
                               decoration: BoxDecoration(color: hColor),
                               child: Text(
-                                'Анастасия Алексеевна Иванова', // пока хардкод
+                                lesson.teacherName,
                                 style: TextStyle(fontFamily: 'SF Pro', fontSize: 8, fontWeight: .w400, color: white),
                               ),
                             ),

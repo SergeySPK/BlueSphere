@@ -7,6 +7,7 @@ import '../../domain/recommendation.dart';
 import '../uikit/calendar.dart';
 import '../uikit/colors.dart';
 import '../uikit/custom_header.dart';
+import '../uikit/error_screen.dart';
 import '../uikit/recommendations_block.dart';
 import '../uikit/status_banner.dart';
 import 'day_details_screen.dart';
@@ -28,6 +29,7 @@ class _LoadScreenState extends State<LoadScreen> {
   ClassStatus? _status;
   Recommendation? _recommendation;
   bool _isLoading = true;
+  int? _errorCode;
 
   bool get isClassSelected => widget.classId.isNotEmpty && widget.classId != 'Выберите класс';
 
@@ -46,7 +48,10 @@ class _LoadScreenState extends State<LoadScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.classId != widget.classId) {
       if (isClassSelected) {
-        setState(() => _isLoading = true);
+        setState(() {
+          _isLoading = true;
+          _errorCode = null;
+        });
         _loadData();
       } else {
         setState(() => _isLoading = false);
@@ -55,19 +60,39 @@ class _LoadScreenState extends State<LoadScreen> {
   }
 
   Future<void> _loadData() async {
-    final now = DateTime.now();
-    final month = now.month.toString().padLeft(2, '0');
-    final date = "${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}";
+    setState(() {
+      _isLoading = true;
+      _errorCode = null;
+    });
 
-    final results = await Future.wait([ApiService.getHeatmap(widget.classId, month), ApiService.getSummary(widget.classId, date), ApiService.getRecommendations(widget.classId)]);
+    try {
+      final now = DateTime.now();
+      final month = now.month.toString().padLeft(2, '0');
+      final date = "${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}";
 
-    if (mounted) {
-      setState(() {
-        _loadDays = (results[0] as List<LoadDay>?) ?? [];
-        _status = results[1] as ClassStatus?;
-        _recommendation = results[2] as Recommendation?;
-        _isLoading = false;
-      });
+      final results = await Future.wait([ApiService.getHeatmap(widget.classId, month), ApiService.getSummary(widget.classId, date), ApiService.getRecommendations(widget.classId)]);
+
+      if (mounted) {
+        setState(() {
+          _loadDays = (results[0] as List<LoadDay>?) ?? [];
+          _status = results[1] as ClassStatus?;
+          _recommendation = results[2] as Recommendation?;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      int code = 500;
+      final errorString = e.toString();
+      if (errorString.contains('Exception: ')) {
+        code = int.tryParse(errorString.split('Exception: ')[1]) ?? 500;
+      }
+
+      if (mounted) {
+        setState(() {
+          _errorCode = code;
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -75,64 +100,71 @@ class _LoadScreenState extends State<LoadScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс', onClose: () {}, onMenu: () {}),
-            Expanded(
-              child: !isClassSelected
-                  ? _buildNoClassSelected()
-                  : _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : SingleChildScrollView(
-                      padding: po(t: 8, l: 16, r: 16, b: 80),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (_status == null)
-                            Center(
-                              child: Text('Не удалось загрузить статус', style: TextStyle(color: black)),
-                            )
-                          else
-                            StatusBanner(level: _status!.level ?? 4, date: _status!.date ?? '', showButton: true, onGoToSummary: widget.onGoToSummary),
-                          SizedBox(height: 16.fh),
-                          LoadCalendar(
-                            date: DateTime.now(),
-                            loadDays: _loadDays ?? [],
-                            onDayTap: (day) {
-                              final now = DateTime.now();
-                              final months = ['Января', 'Февраля', 'Марта', 'Апреля', 'Мая', 'Июня', 'Июля', 'Августа', 'Сентября', 'Октября', 'Ноября', 'Декабря'];
-                              final currentMonth = months[now.month - 1];
-                              final currentMonthNumber = now.month.toString();
+      body: Column(
+        children: [
+          CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс', onClose: () {}, onMenu: () {}),
+          Expanded(child: _buildBody()),
+        ],
+      ),
+    );
+  }
 
-                              // Ищем данные дня (если нет, ставим level 4)
-                              final dayData = _loadDays!.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: 4));
+  // Этот метод отвечает за то, что показывать на экране
+  Widget _buildBody() {
+    if (_errorCode != null) {
+      return ErrorScreen(code: _errorCode!);
+    }
+    if (!isClassSelected) {
+      return _buildNoClassSelected();
+    }
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => DayDetailsScreen(
-                                    day: day,
-                                    monthName: currentMonth,
-                                    monthNumber: currentMonthNumber,
-                                    className: widget.className,
-                                    classId: widget.classId,
-                                    dayLevel: dayData.level,
-                                    bannerLevel: _status?.level ?? 4,
-                                    statusDate: _status?.date ?? '',
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                          SizedBox(height: 16.fh),
-                          if (_recommendation != null) RecommendationsBlock(daysToReduce: _recommendation!.daysToReduce, daysToMoveTo: _recommendation!.daysToMoveTo),
-                        ],
-                      ),
-                    ),
-            ),
-          ],
-        ),
+    return SingleChildScrollView(
+      padding: po(t: 8, l: 16, r: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_status == null)
+            Center(
+              child: Text('Не удалось загрузить статус', style: TextStyle(color: black)),
+            )
+          else
+            StatusBanner(level: _status!.level ?? 4, date: _status!.date ?? '', showButton: true, onGoToSummary: widget.onGoToSummary),
+          SizedBox(height: 16.fh),
+
+          LoadCalendar(
+            date: DateTime.now(),
+            loadDays: _loadDays ?? [],
+            onDayTap: (day) {
+              final now = DateTime.now();
+              final months = ['Января', 'Февраля', 'Марта', 'Апреля', 'Мая', 'Июня', 'Июля', 'Августа', 'Сентября', 'Октября', 'Ноября', 'Декабря'];
+              final currentMonth = months[now.month - 1];
+              final currentMonthNumber = now.month.toString();
+              final dayData = _loadDays!.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: 4, isEditing: false));
+
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => DayDetailsScreen(
+                    day: day,
+                    monthName: currentMonth,
+                    monthNumber: currentMonthNumber,
+                    className: widget.className,
+                    classId: widget.classId,
+                    dayLevel: dayData.level,
+                    bannerLevel: _status?.level ?? 4,
+                    statusDate: _status?.date ?? '',
+                  ),
+                ),
+              );
+            },
+          ),
+          SizedBox(height: 16.fh),
+
+          if (_recommendation != null) RecommendationsBlock(daysToReduce: _recommendation!.daysToReduce, daysToMoveTo: _recommendation!.daysToMoveTo),
+        ],
       ),
     );
   }

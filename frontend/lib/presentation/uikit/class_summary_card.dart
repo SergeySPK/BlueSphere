@@ -51,18 +51,18 @@ class ClassSummaryCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'учащихся чувствуют себя',
-                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: bottomBarText, fontWeight: .w500),
+                      'обучающихся чувствуют себя',
+                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: grey, fontWeight: .w400, letterSpacing: 2.88),
                     ),
                     SizedBox(height: 5.fh),
                     Text(
                       statusText,
                       style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w700, color: loadMax),
                     ),
-                    SizedBox(height: 5.fh),
+                    SizedBox(height: 2.fh),
                     Text(
-                      'по окончании сегодняшних уроков',
-                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: bottomBarText, fontWeight: .w500),
+                      'после сегодняшнего учебного дня',
+                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: grey, fontWeight: .w400, letterSpacing: 1.6),
                     ),
                   ],
                 ),
@@ -72,20 +72,16 @@ class ClassSummaryCard extends StatelessWidget {
           SizedBox(height: 20.fh),
           Column(
             children: [
-              // Самый тревожный
               Container(
                 padding: pa(8),
-                decoration: BoxDecoration(
-                  color: background,
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(8)),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Expanded(
                       child: Text(
                         'Самый тревожный урок\nна сегодня:',
-                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: black, fontWeight: .w500),
+                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: grey, fontWeight: .w500),
                       ),
                     ),
                     Text(
@@ -95,23 +91,17 @@ class ClassSummaryCard extends StatelessWidget {
                   ],
                 ),
               ),
-
               SizedBox(height: 8.fh),
-
-              // Самый легкий
               Container(
                 padding: pa(8),
-                decoration: BoxDecoration(
-                  color: background,
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(8)),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Expanded(
                       child: Text(
                         'Самый легкий урок\nна сегодня:',
-                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: black, fontWeight: .w500),
+                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: grey, fontWeight: .w500),
                       ),
                     ),
                     Text(

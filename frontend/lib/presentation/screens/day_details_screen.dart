@@ -7,6 +7,7 @@ import '../uikit/custom_header.dart';
 import '../uikit/status_banner.dart';
 import '../uikit/schedule_card.dart';
 import '../uikit/recommendations_block.dart';
+import 'dart:math';
 
 class DayDetailsScreen extends StatefulWidget {
   final int day;
@@ -37,9 +38,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
   }
 
   Future<void> _loadSchedule() async {
-    final year = DateTime
-        .now()
-        .year;
+    final year = DateTime.now().year;
     final month = widget.monthNumber.padLeft(2, '0');
     final day = widget.day.toString().padLeft(2, '0');
     final dateStr = '$year-$month-$day';
@@ -48,7 +47,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
 
     if (mounted) {
       setState(() {
-        if (data != null && data.isNotEmpty) {
+        if (data.isNotEmpty) {
           _lessons = data.map((json) => Lesson.fromJson(json)).toList();
         } else {
           _lessons = [];
@@ -58,11 +57,15 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
     }
   }
 
+  Color? _randomEditColor;
+
   void _editLesson(Lesson lesson) {
+    final random = Random();
+
     setState(() {
       _editingLessonNumber = lesson.lessonNumber;
+      _randomEditColor = editColors[random.nextInt(editColors.length)];
     });
-    ApiService.startEditing(lesson.id);
 
     final TextEditingController controller = TextEditingController(text: lesson.lessonType);
 
@@ -127,15 +130,11 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                           Navigator.pop(dialogContext);
                           return;
                         }
-
                         // отправляем на сервер
                         final success = await ApiService.updateLesson(lesson.id, newType, 'demo-teacher-1');
-
                         if (!dialogContext.mounted) return;
-
                         // сообщаем серверу, что закончили
                         await ApiService.stopEditing(lesson.id);
-
                         if (success) {
                           // если сервер сохранил — перезапрашиваем данные
                           setState(() => _editingLessonNumber = null);
@@ -147,19 +146,12 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                           setState(() {
                             final index = _lessons!.indexWhere((l) => l.id == lesson.id);
                             if (index != -1) {
-                              _lessons![index] = Lesson(id: lesson.id,
-                                  lessonNumber: lesson.lessonNumber,
-                                  subjectName: lesson.subjectName,
-                                  teacherName: lesson.teacherName,
-                                  room: lesson.room,
-                                  lessonType: newType,
-                                  subgroup: lesson.subgroup);
+                              _lessons![index] = Lesson(id: lesson.id, lessonNumber: lesson.lessonNumber, subjectName: lesson.subjectName, teacherName: lesson.teacherName, room: lesson.room, lessonType: newType, subgroup: lesson.subgroup);
                             }
                             _editingLessonNumber = null;
                           });
                           Navigator.pop(dialogContext);
 
-                          // выводим предупреждение в консоль
                           print('Данные не сохранены на сервере (нужен токен авторизации)');
                         }
                       },
@@ -202,12 +194,8 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     final Color dayColor = _getLoadColor(widget.dayLevel);
-    final int year = DateTime
-        .now()
-        .year;
-    final int month = int.tryParse(widget.monthNumber) ?? DateTime
-        .now()
-        .month;
+    final int year = DateTime.now().year;
+    final int month = int.tryParse(widget.monthNumber) ?? DateTime.now().month;
     final DateTime date = DateTime(year, month, widget.day);
     final List<String> weekdays = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
     final String weekdayName = weekdays[date.weekday - 1];
@@ -224,31 +212,31 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
               child: _isLoading
                   ? Center(child: CircularProgressIndicator())
                   : SingleChildScrollView(
-                padding: po(t: 8, l: 16, r: 16, b: 80),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    StatusBanner(level: widget.bannerLevel, date: widget.statusDate, showButton: false),
-                    SizedBox(height: 16.fh),
-                    if (_lessons != null)
-                      ScheduleCard(
-                        day: widget.day.toString(),
-                        month: widget.monthName,
-                        weekday: weekdayName,
-                        lessons: _lessons!.map((l) => LessonData(number: l.lessonNumber, subject: l.subjectName, type: l.lessonType)).toList(),
-                        statusColor: dayColor,
-                        editingLessonNumber: _editingLessonNumber,
-                        editingColor: editingColor,
-                        onEditLesson: (lessonData) {
-                          final lesson = _lessons!.firstWhere((l) => l.lessonNumber == lessonData.number);
-                          _editLesson(lesson);
-                        },
+                      padding: po(t: 8, l: 16, r: 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          StatusBanner(level: widget.bannerLevel, date: widget.statusDate, showButton: false),
+                          SizedBox(height: 16.fh),
+                          if (_lessons != null)
+                            ScheduleCard(
+                              day: widget.day.toString(),
+                              month: widget.monthName,
+                              weekday: weekdayName,
+                              lessons: _lessons!.map((l) => LessonData(number: l.lessonNumber, subject: l.subjectName, type: l.lessonType, teacherName: l.teacherName)).toList(),
+                              statusColor: dayColor,
+                              editingLessonNumber: _editingLessonNumber,
+                              editingColor: _randomEditColor ?? loadMax,
+                              onEditLesson: (lessonData) {
+                                final lesson = _lessons!.firstWhere((l) => l.lessonNumber == lessonData.number);
+                                _editLesson(lesson);
+                              },
+                            ),
+                          SizedBox(height: 16.fh),
+                          AiRecommendationsCard(recommendations: mockRecommendations),
+                        ],
                       ),
-                    SizedBox(height: 16.fh),
-                    AiRecommendationsCard(recommendations: mockRecommendations),
-                  ],
-                ),
-              ),
+                    ),
             ),
           ],
         ),

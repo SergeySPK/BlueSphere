@@ -11,6 +11,8 @@ const Color classColor = Color(0xff3A3A3A);
 const Color currentDayBorder = Color(0xff5882D7);
 const Color emptyCell = Color(0xffE3E0EF);
 const Color results = Color(0xffD9D9D9);
+const Color red = Color(0xffB84A4C);
+const Color grey = Color(0xff454545);
 
 // Цвета загруженности
 const Color loadMin = Color(0xffA7A3B5);

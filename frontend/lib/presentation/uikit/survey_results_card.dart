@@ -28,32 +28,32 @@ class SurveyResultsCard extends StatelessWidget {
         children: [
           Text(
             'РЕЗУЛЬТАТЫ ОПРОСА $date',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w700, color: black),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w700, color: grey),
           ),
-          SizedBox(height: 11.fh),
+          SizedBox(height: 15.fh),
           Text(
             'Общая оценка состояния после учебного дня',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, fontWeight: .w400, color: black),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 11, fontWeight: .w500, color: black),
           ),
-          SizedBox(height: 17.fh),
+          SizedBox(height: 12.fh),
           ...generalResults.map((item) => _buildProgressBar(item)),
           SizedBox(height: 7.fh),
           Divider(color: text.withOpacity(0.2), height: 1),
           SizedBox(height: 17.fh),
           Text(
             'Предметы, на которых сегодня ученикам\nбыло больше всего тревожно',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, fontWeight: .w400, color: black),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 11, fontWeight: .w500, color: black),
           ),
-          SizedBox(height: 11.fh),
+          SizedBox(height: 12.fh),
           ...stressSubjects.map((item) => _buildProgressBar(item)),
           SizedBox(height: 7.fh),
           Divider(color: text.withOpacity(0.2), height: 1),
           SizedBox(height: 17.fh),
           Text(
             'Предметы, на которых сегодня ученикам\nбыло легко',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, fontWeight: .w400, color: black),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 11, fontWeight: .w500, color: black),
           ),
-          SizedBox(height: 11.fh),
+          SizedBox(height: 12.fh),
           ...easySubjects.map((item) => _buildProgressBar(item)),
         ],
       ),
@@ -72,7 +72,7 @@ class SurveyResultsCard extends StatelessWidget {
     final barColor = item.isHighlighted ? loadMax : getBarColor(item.percentage);
 
     return Padding(
-      padding: po(b: 12),
+      padding: po(b: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -80,16 +80,15 @@ class SurveyResultsCard extends StatelessWidget {
             item.label,
             style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: black, fontWeight: .w400),
           ),
-          SizedBox(height: 5.fh),
           Row(
             children: [
               Expanded(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(value: item.percentage / 100, minHeight: 12, backgroundColor: results, valueColor: AlwaysStoppedAnimation<Color>(barColor)),
+                  child: LinearProgressIndicator(value: item.percentage / 100, minHeight: 9, backgroundColor: results, valueColor: AlwaysStoppedAnimation<Color>(barColor)),
                 ),
               ),
-              SizedBox(width: 12.fw),
+              SizedBox(width: 10.fw),
               SizedBox(
                 width: 35.fw,
                 child: Text(

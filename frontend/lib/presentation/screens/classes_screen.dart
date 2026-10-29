@@ -4,6 +4,7 @@ import '../../domain/school_class.dart';
 import '../../data/api_service.dart';
 import '../uikit/colors.dart';
 import '../uikit/custom_header.dart';
+import '../uikit/error_screen.dart';
 
 class ClassesScreen extends StatefulWidget {
   final Function(String id, String name) onClassSelected;
@@ -18,6 +19,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
   Map<String, List<SchoolClass>>? _classes;
   bool _isLoading = true;
   String? _expandedGroup;
+  int? _errorCode;
   List<String> _sortedGroupNames = [];
 
   @override
@@ -27,46 +29,66 @@ class _ClassesScreenState extends State<ClassesScreen> {
   }
 
   Future<void> _loadClasses() async {
-    final data = await ApiService.getClasses();
     setState(() {
-      _classes = data;
-      if (_classes != null) {
-        _sortedGroupNames = _classes!.keys.toList()
-          ..sort((a, b) {
-            final gradeA = int.tryParse(a.split(' ').first) ?? 0;
-            final gradeB = int.tryParse(b.split(' ').first) ?? 0;
-            return gradeA.compareTo(gradeB);
-          });
-      }
-      _isLoading = false;
+      _isLoading = true;
+      _errorCode = null;
     });
+
+    try {
+      final data = await ApiService.getClasses();
+      if (mounted) {
+        setState(() {
+          _classes = data;
+          _sortedGroupNames = _classes!.keys.toList()
+            ..sort((a, b) {
+              final gradeA = int.tryParse(a.split(' ').first) ?? 0;
+              final gradeB = int.tryParse(b.split(' ').first) ?? 0;
+              return gradeA.compareTo(gradeB);
+            });
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      int code = 500;
+      final errorString = e.toString();
+      if (errorString.contains('Exception: ')) {
+        code = int.tryParse(errorString.split('Exception: ')[1]) ?? 500;
+      }
+
+      if (mounted) {
+        setState(() {
+          _errorCode = code;
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            CustomHeader(title: 'Выберите класс', onClose: () {}, onMenu: () {}),
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _classes == null
-                  ? const Center(child: Text('Ошибка загрузки'))
-                  : ListView.builder(
-                      padding: po(l: 16, r: 16, t: 8, b: 80),
-                      itemCount: _sortedGroupNames.length,
-                      itemBuilder: (context, index) {
-                        final groupName = _sortedGroupNames[index];
-                        final classes = _classes![groupName]!;
-                        return _buildAccordionGroup(groupName, classes);
-                      },
-                    ),
-            ),
-          ],
-        ),
+      body: Column(
+        children: [
+          CustomHeader(title: 'Выберите класс', onClose: () {}, onMenu: () {}),
+          Expanded(
+            child: _errorCode != null
+                ? ErrorScreen(code: _errorCode!)
+                : _isLoading
+                ? Center(child: CircularProgressIndicator())
+                : _classes == null
+                ? Center(child: Text('Ошибка загрузки'))
+                : ListView.builder(
+                    padding: po(l: 16, r: 16),
+                    itemCount: _sortedGroupNames.length,
+                    itemBuilder: (context, index) {
+                      final groupName = _sortedGroupNames[index];
+                      final classes = _classes![groupName]!;
+                      return _buildAccordionGroup(groupName, classes);
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
