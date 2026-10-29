@@ -1,16 +1,20 @@
-from datetime import date as PythonDate
+from datetime import date as PythonDate, datetime, timedelta, timezone
 import calendar
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Response, status, Header
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.orm import Session, aliased
+from sqlalchemy.exc import IntegrityError
 
 from database import SessionLocal
 from models import (
     AcademicYear,
     Administrator,
+    AuthTicket,
     Class,
+    EditingSession,
     Recommendation,
     Schedule,
     Student,
@@ -25,6 +29,8 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 
 import hashlib
+import jwt
+import secrets
 import hmac
 import json
 import os
@@ -32,6 +38,13 @@ import time
 from urllib.parse import parse_qsl
 
 app = FastAPI(title="Blue Sphere API", docs_url="/docs", redoc_url=None)
+
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TOKEN_EXPIRE_SECONDS = 60 * 60
+JWT_ISSUER = "blue-sphere-api"
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
 
 def get_db():
     db = SessionLocal()
@@ -41,12 +54,93 @@ def get_db():
         db.close()
 
 
+def create_access_token(user: User) -> tuple[str, int]:
+    secret_key = os.getenv("JWT_SECRET_KEY")
+
+    if not secret_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Авторизация API не настроена",
+        )
+
+    now = int(time.time())
+    expires_in = JWT_ACCESS_TOKEN_EXPIRE_SECONDS
+
+    payload = {
+        "sub": str(user.id),
+        "iat": now,
+        "exp": now + expires_in,
+        "iss": JWT_ISSUER,
+    }
+
+    token = jwt.encode(
+        payload,
+        secret_key,
+        algorithm=JWT_ALGORITHM,
+    )
+
+    return token, expires_in
+
+
+def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(
+        bearer_scheme
+    ),
+    db: Session = Depends(get_db),
+) -> User:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="Требуется авторизация",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    secret_key = os.getenv("JWT_SECRET_KEY")
+
+    if not secret_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Авторизация API не настроена",
+        )
+
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            secret_key,
+            algorithms=[JWT_ALGORITHM],
+            issuer=JWT_ISSUER,
+            options={"require": ["sub", "iat", "exp", "iss"]},
+        )
+
+        user_id = int(payload["sub"])
+        if user_id <= 0:
+            raise ValueError("Некорректный идентификатор")
+
+    except (jwt.InvalidTokenError, ValueError, TypeError, KeyError):
+        raise HTTPException(
+            status_code=401,
+            detail="Токен недействителен или устарел",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.get(User, user_id)
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Пользователь больше не существует",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return user
+
+
 # Разрешённые адреса Flutter-приложения.
-# На хостинге FRONTEND_ORIGINS задаётся через переменные окружения.
+# На хостинге API_BASE_URL задаётся через переменные окружения.
 allowed_origins = [
     origin.strip()
     for origin in os.getenv(
-        "FRONTEND_ORIGINS",
+        "API_BASE_URL",
     ).split(",")
     if origin.strip()
 ]
@@ -69,7 +163,8 @@ class SchoolClass(BaseModel):
 
 class LoadDay(BaseModel):
     day: int
-    level: int # 0 - перегруз, 4 - пусто
+    level: int  # 0 — перегруз, 4 — пусто
+    is_editing: bool = False
 
 class ClassStatus(BaseModel):
     level: Optional[int] = None
@@ -82,11 +177,36 @@ class Recommendation(BaseModel):
 
 class UserProfile(BaseModel):
     sferum_id: str
-    roles: List[str] # Массив ролей: ["teacher", "admin"]
-    class_ids: List[str] # Список ID классов, к которым привязан пользователь
+    roles: List[str]
+    class_ids: List[str]
+
+
+class AuthResponse(UserProfile):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
 
 class AuthRequest(BaseModel):
     init_data: str
+
+
+class AuthTicketCreateRequest(BaseModel):
+    max_user_id: str = Field(min_length=1, max_length=100)
+
+
+class AuthTicketCreateResponse(BaseModel):
+    ticket: str
+    expires_in: int
+
+
+class AuthTicketExchangeRequest(BaseModel):
+    ticket: str = Field(min_length=1, max_length=200)
+
+
+class AuthTicketExchangeResponse(AuthResponse):
+    pass
+
 
 # Модели для работы с расписанием дня
 class Lesson(BaseModel):
@@ -101,7 +221,6 @@ class Lesson(BaseModel):
 
 class LessonUpdateRequest(BaseModel):
     lesson_type: str
-    updated_by_sferum_id: str
 
 
 def validate_max_init_data(init_data: str) -> dict:
@@ -242,25 +361,8 @@ async def root():
 
 
 
-@app.post("/api/auth", response_model=UserProfile)
-async def auth_user(
-    request: AuthRequest,
-    db: Session = Depends(get_db),
-):
-    # Сначала проверяем подлинность данных, полученных от MAX.
-    verified_user = validate_max_init_data(request.init_data)
-    sferum_id = verified_user["sferum_id"]
-
-    # Вход через MAX не означает автоматическую регистрацию.
-    user = db.scalar(
-        select(User).where(User.sferum_id == sferum_id)
-    )
-
-    if user is None:
-        raise HTTPException(
-            status_code=403,
-            detail="Пользователь не зарегистрирован в Blue Sphere",
-        )
+def build_auth_response(user: User, db: Session) -> AuthResponse:
+    """Формирует профиль пользователя и выдаёт JWT."""
 
     roles = []
     class_ids = set()
@@ -305,11 +407,155 @@ async def auth_user(
         roles.append("student")
         class_ids.add(student.class_id)
 
-    return UserProfile(
+    access_token, expires_in = create_access_token(user)
+
+    return AuthResponse(
         sferum_id=user.sferum_id,
         roles=roles,
         class_ids=sorted(class_ids),
+        access_token=access_token,
+        expires_in=expires_in,
     )
+
+
+
+@app.post("/api/auth", response_model=AuthResponse)
+async def auth_user(
+    request: AuthRequest,
+    db: Session = Depends(get_db),
+):
+    verified_user = validate_max_init_data(request.init_data)
+    sferum_id = verified_user["sferum_id"]
+
+    user = db.scalar(
+        select(User).where(User.sferum_id == sferum_id)
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Пользователь не зарегистрирован в Blue Sphere",
+        )
+
+    return build_auth_response(user, db)
+
+
+
+AUTH_TICKET_EXPIRE_SECONDS = 60
+
+
+@app.post(
+    "/api/auth/ticket",
+    response_model=AuthTicketCreateResponse,
+)
+def create_auth_ticket(
+    request: AuthTicketCreateRequest,
+    x_bot_secret: Optional[str] = Header(
+        default=None,
+        alias="X-Bot-Secret",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Создаёт одноразовый билет для доверенного бота."""
+
+    expected_secret = os.getenv("BOT_INTERNAL_SECRET")
+
+    if (
+        not expected_secret
+        or not x_bot_secret
+        or not hmac.compare_digest(x_bot_secret, expected_secret)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав",
+        )
+
+    user = db.scalar(
+        select(User).where(User.sferum_id == request.max_user_id)
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Пользователь не зарегистрирован в Blue Sphere",
+        )
+
+    raw_ticket = secrets.token_urlsafe(32)
+    ticket_hash = hashlib.sha256(raw_ticket.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+
+    ticket_record = AuthTicket(
+        ticket_hash=ticket_hash,
+        user_id=user.id,
+        expires_at=now + timedelta(seconds=AUTH_TICKET_EXPIRE_SECONDS),
+    )
+
+    try:
+        db.add(ticket_record)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Не удалось создать билет авторизации",
+        )
+
+    return AuthTicketCreateResponse(
+        ticket=raw_ticket,
+        expires_in=AUTH_TICKET_EXPIRE_SECONDS,
+    )
+
+
+@app.post(
+    "/api/auth/ticket/exchange",
+    response_model=AuthTicketExchangeResponse,
+)
+def exchange_auth_ticket(
+    request: AuthTicketExchangeRequest,
+    db: Session = Depends(get_db),
+):
+    """Однократно обменивает билет на JWT."""
+
+    ticket_hash = hashlib.sha256(
+        request.ticket.encode("utf-8")
+    ).hexdigest()
+
+    now = datetime.now(timezone.utc)
+
+    # Одно атомарное обновление не позволяет погасить билет дважды.
+    result = db.execute(
+        update(AuthTicket)
+        .where(
+            AuthTicket.ticket_hash == ticket_hash,
+            AuthTicket.used_at.is_(None),
+            AuthTicket.expires_at > now,
+        )
+        .values(used_at=now)
+        .returning(AuthTicket.user_id)
+    )
+
+    user_id = result.scalar_one_or_none()
+
+    if user_id is None:
+        db.rollback()
+        raise HTTPException(
+            status_code=401,
+            detail="Билет недействителен, истёк или уже использован",
+        )
+
+    user = db.get(User, user_id)
+
+    if user is None:
+        db.rollback()
+        raise HTTPException(
+            status_code=401,
+            detail="Пользователь не найден",
+        )
+
+    # Сначала фиксируем погашение билета в БД.
+    db.commit()
+
+    return build_auth_response(user, db)
 
 
 
@@ -346,7 +592,6 @@ def get_classes(db: Session = Depends(get_db)):
         )
 
     return result
-
 
 
 def get_daily_lesson_counts(
@@ -395,9 +640,10 @@ def get_load_level(lesson_count: int) -> int:
 def get_heatmap(
     class_id: str,
     month: str = "09",
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Возвращает нагрузку по расписанию за выбранный месяц."""
+    """Возвращает нагрузку и активное редактирование по дням месяца."""
 
     if not db.get(Class, class_id):
         raise HTTPException(status_code=404, detail="Класс не найден")
@@ -421,12 +667,44 @@ def get_heatmap(
         db, class_id, start_date, end_date
     )
 
+    current_user_id = None
+    current_user_id = current_user.id
+
+    now = datetime.now(timezone.utc)
+
+    editing_query = (
+        select(Schedule.date, EditingSession.user_id)
+        .join(
+            TeachingAssignment,
+            Schedule.assignment_id == TeachingAssignment.id,
+        )
+        .join(
+            EditingSession,
+            EditingSession.schedule_id == Schedule.id,
+        )
+        .where(
+            TeachingAssignment.class_id == class_id,
+            Schedule.date >= start_date,
+            Schedule.date <= end_date,
+            EditingSession.expires_at > now,
+        )
+    )
+
+    if current_user_id is not None:
+        editing_query = editing_query.where(
+            EditingSession.user_id != current_user_id
+        )
+
+    editing_rows = db.execute(editing_query).all()
+    editing_days = {row.date.day for row in editing_rows}
+
     return [
         LoadDay(
             day=day,
-            level=get_load_level(counts.get(
-                PythonDate(year, month_number, day), 0
-            )),
+            level=get_load_level(
+                counts.get(PythonDate(year, month_number, day), 0)
+            ),
+            is_editing=day in editing_days,
         )
         for day in range(1, days_in_month + 1)
     ]
@@ -637,6 +915,7 @@ def get_schedule(
 def update_lesson(
     lesson_id: str,
     request: LessonUpdateRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Изменяет тип урока и сохраняет пользователя, который внёс изменение."""
@@ -656,25 +935,223 @@ def update_lesson(
             detail="Урок не найден.",
         )
 
-    editor = db.scalar(
-        select(User).where(
-            User.sferum_id == request.updated_by_sferum_id
+    editor = current_user
+
+    assignment = db.scalar(
+        select(TeachingAssignment)
+        .join(
+            Teacher,
+            TeachingAssignment.teacher_id == Teacher.id,
+        )
+        .where(
+            TeachingAssignment.id == lesson.assignment_id,
+            Teacher.user_id == editor.id,
         )
     )
 
-    if editor is None:
+    if assignment is None:
         raise HTTPException(
-            status_code=404,
-            detail="Пользователь, изменяющий урок, не найден.",
+            status_code=403,
+            detail="Вы можете редактировать только свои уроки.",
         )
 
+    now = datetime.now(timezone.utc)
+
+    editing_session = db.scalar(
+        select(EditingSession)
+        .where(EditingSession.schedule_id == lesson.id)
+        .with_for_update()
+    )
+
+    if (
+        editing_session is None
+        or editing_session.user_id != editor.id
+        or editing_session.expires_at <= now
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Нет активной сессии редактирования этого урока.",
+        )
+    
     lesson.lesson_type = request.lesson_type
     lesson.updated_by_user_id = editor.id
+
+    # Продлеваем сессию после успешного изменения урока.
+    editing_session.expires_at = now + timedelta(
+        seconds=EDITING_SESSION_TTL_SECONDS
+    )
 
     db.commit()
     db.refresh(lesson)
 
     return get_lesson_response(db, lesson.id)
+
+
+EDITING_SESSION_TTL_SECONDS = 60
+
+
+def get_editing_user_and_lesson(
+    lesson_id: str,
+    user: User,
+    db: Session,
+):
+    """Находит урок и проверяет, что пользователь ведёт этот урок."""
+
+    try:
+        numeric_lesson_id = int(lesson_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="ID урока должен быть числом.",
+        )
+
+    lesson = db.get(Schedule, numeric_lesson_id)
+    if lesson is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Урок не найден.",
+        )
+
+    assignment = db.scalar(
+        select(TeachingAssignment)
+        .join(
+            Teacher,
+            TeachingAssignment.teacher_id == Teacher.id,
+        )
+        .where(
+            TeachingAssignment.id == lesson.assignment_id,
+            Teacher.user_id == user.id,
+        )
+    )
+
+    if assignment is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Вы можете редактировать только свои уроки.",
+        )
+
+    return lesson, user
+
+
+@app.post("/api/schedule/{lesson_id}/editing")
+def start_editing(
+    lesson_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Начинает или возобновляет собственную сессию редактирования."""
+
+    lesson, user = get_editing_user_and_lesson(
+        lesson_id, current_user, db
+    )
+
+    now = datetime.now(timezone.utc)
+
+    session = db.scalar(
+        select(EditingSession)
+        .where(EditingSession.schedule_id == lesson.id)
+        .with_for_update()
+    )
+
+    if session is not None and session.expires_at > now:
+        if session.user_id != user.id:
+            raise HTTPException(
+                status_code=409,
+                detail="Этот урок уже редактирует другой пользователь.",
+            )
+
+        session.expires_at = now + timedelta(
+            seconds=EDITING_SESSION_TTL_SECONDS
+        )
+        db.commit()
+        return {"success": True, "expires_in": EDITING_SESSION_TTL_SECONDS}
+
+    if session is not None:
+        db.delete(session)
+        db.flush()
+
+    session = EditingSession(
+        schedule_id=lesson.id,
+        user_id=user.id,
+        expires_at=now + timedelta(
+            seconds=EDITING_SESSION_TTL_SECONDS
+        ),
+    )
+    db.add(session)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Этот урок уже редактирует другой пользователь.",
+        )
+
+    return {"success": True, "expires_in": EDITING_SESSION_TTL_SECONDS}
+
+
+@app.put("/api/schedule/{lesson_id}/editing")
+def renew_editing(
+    lesson_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Продлевает только собственную активную сессию."""
+
+    lesson, user = get_editing_user_and_lesson(
+        lesson_id, current_user, db
+    )
+
+    now = datetime.now(timezone.utc)
+
+    session = db.scalar(
+        select(EditingSession)
+        .where(EditingSession.schedule_id == lesson.id)
+        .with_for_update()
+    )
+
+    if (
+        session is None
+        or session.user_id != user.id
+        or session.expires_at <= now
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Активная сессия редактирования не найдена.",
+        )
+
+    session.expires_at = now + timedelta(
+        seconds=EDITING_SESSION_TTL_SECONDS
+    )
+    db.commit()
+
+    return {"success": True, "expires_in": EDITING_SESSION_TTL_SECONDS}
+
+
+@app.delete("/api/schedule/{lesson_id}/editing")
+def stop_editing(
+    lesson_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Завершает только собственную сессию редактирования."""
+
+    lesson, user = get_editing_user_and_lesson(
+        lesson_id, current_user, db
+    )
+
+    session = db.scalar(
+        select(EditingSession)
+        .where(EditingSession.schedule_id == lesson.id)
+        .with_for_update()
+    )
+
+    if session is not None and session.user_id == user.id:
+        db.delete(session)
+        db.commit()
+
+    return {"success": True}
 
 
 def get_lesson_response(db: Session, lesson_id: int) -> Lesson:
