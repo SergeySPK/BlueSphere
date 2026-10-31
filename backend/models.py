@@ -2,16 +2,19 @@ from datetime import date as PythonDate, datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
-from sqlalchemy import CheckConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,6 +35,19 @@ class School(Base):
 
 class AcademicYear(Base):
     __tablename__ = "academic_years"
+    __table_args__ = (
+        UniqueConstraint(
+            "school_id",
+            "id",
+            name="uq_academic_years_school_id",
+        ),
+        Index(
+            "uq_academic_years_one_active_per_school",
+            "school_id",
+            unique=True,
+            postgresql_where=text("is_active IS TRUE"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     school_id: Mapped[int] = mapped_column(
@@ -40,23 +56,54 @@ class AcademicYear(Base):
     name: Mapped[str] = mapped_column(String(50))
     start_date: Mapped[PythonDate] = mapped_column(Date)
     end_date: Mapped[PythonDate] = mapped_column(Date)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class Class(Base):
     __tablename__ = "classes"
 
-    id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    __table_args__ = (
+        UniqueConstraint(
+            "school_id",
+            "academic_year_id",
+            "code",
+            name="uq_classes_school_year_code",
+        ),
+        UniqueConstraint(
+            "id",
+            "school_id",
+            "academic_year_id",
+            name="uq_classes_id_school_year",
+        ),
+        ForeignKeyConstraint(
+            ["school_id", "academic_year_id"],
+            ["academic_years.school_id", "academic_years.id"],
+            name="fk_classes_school_academic_year",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
     school_id: Mapped[int] = mapped_column(
         ForeignKey("schools.id", ondelete="CASCADE")
     )
-    academic_year_id: Mapped[int] = mapped_column(
-        ForeignKey("academic_years.id", ondelete="CASCADE")
-    )
+
+    academic_year_id: Mapped[int] = mapped_column(Integer)
+
+    code: Mapped[str] = mapped_column(String(20))
     name: Mapped[str] = mapped_column(String(50))
 
 
 class Subject(Base):
     __tablename__ = "subjects"
+    __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "school_id",
+            name="uq_subjects_id_school",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     school_id: Mapped[int] = mapped_column(
@@ -91,6 +138,11 @@ class Teacher(Base):
     __tablename__ = "teachers"
     __table_args__ = (
         UniqueConstraint("user_id", "school_id"),
+        UniqueConstraint(
+            "id",
+            "school_id",
+            name="uq_teachers_id_school",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -110,8 +162,43 @@ class Student(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         unique=True,
     )
-    class_id: Mapped[str] = mapped_column(
+    class_id: Mapped[int] = mapped_column(
         ForeignKey("classes.id", ondelete="CASCADE")
+    )
+
+
+class StudentEnrollment(Base):
+    __tablename__ = "student_enrollments"
+
+    __table_args__ = (
+        CheckConstraint(
+            "end_date IS NULL OR end_date >= start_date",
+            name="ck_student_enrollments_dates",
+        ),
+        Index(
+            "uq_student_enrollments_active_student",
+            "student_id",
+            unique=True,
+            postgresql_where=text("end_date IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE")
+    )
+
+    class_id: Mapped[int] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE")
+    )
+
+    start_date: Mapped[PythonDate] = mapped_column(Date)
+    end_date: Mapped[PythonDate | None] = mapped_column(Date, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
     )
 
 
@@ -133,6 +220,7 @@ class Administrator(Base):
 
 class TeachingAssignment(Base):
     __tablename__ = "teaching_assignments"
+
     __table_args__ = (
         UniqueConstraint(
             "teacher_id",
@@ -141,22 +229,44 @@ class TeachingAssignment(Base):
             "academic_year_id",
             "subgroup",
         ),
-        CheckConstraint("subgroup IN (0, 1, 2)", name="ck_teaching_assignments_subgroup"),
+        CheckConstraint(
+            "subgroup IN (0, 1, 2)",
+            name="ck_teaching_assignments_subgroup",
+        ),
+        ForeignKeyConstraint(
+            ["teacher_id", "school_id"],
+            ["teachers.id", "teachers.school_id"],
+            name="fk_assignments_teacher_school",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["subject_id", "school_id"],
+            ["subjects.id", "subjects.school_id"],
+            name="fk_assignments_subject_school",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["class_id", "school_id", "academic_year_id"],
+            ["classes.id", "classes.school_id", "classes.academic_year_id"],
+            name="fk_assignments_class_school_year",
+            ondelete="CASCADE",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    teacher_id: Mapped[int] = mapped_column(
-        ForeignKey("teachers.id", ondelete="CASCADE")
+
+    school_id: Mapped[int] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE")
     )
-    class_id: Mapped[str] = mapped_column(
-        ForeignKey("classes.id", ondelete="CASCADE")
-    )
-    subject_id: Mapped[int] = mapped_column(
-        ForeignKey("subjects.id", ondelete="CASCADE")
-    )
-    academic_year_id: Mapped[int] = mapped_column(
-        ForeignKey("academic_years.id", ondelete="CASCADE")
-    )
+
+    teacher_id: Mapped[int] = mapped_column(Integer)
+
+    class_id: Mapped[int] = mapped_column(Integer)
+
+    subject_id: Mapped[int] = mapped_column(Integer)
+
+    academic_year_id: Mapped[int] = mapped_column(Integer)
+
     subgroup: Mapped[int] = mapped_column(Integer, default=0)
 
 
@@ -226,7 +336,7 @@ class Survey(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    class_id: Mapped[str] = mapped_column(
+    class_id: Mapped[int] = mapped_column(
         ForeignKey("classes.id", ondelete="CASCADE")
     )
     student_id: Mapped[int] = mapped_column(
@@ -247,7 +357,7 @@ class SurveyDraft(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    class_id: Mapped[str] = mapped_column(
+    class_id: Mapped[int] = mapped_column(
         ForeignKey("classes.id", ondelete="CASCADE")
     )
     student_id: Mapped[int] = mapped_column(
@@ -274,7 +384,7 @@ class Recommendation(Base):
     __tablename__ = "recommendations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    class_id: Mapped[str] = mapped_column(
+    class_id: Mapped[int] = mapped_column(
         ForeignKey("classes.id", ondelete="CASCADE")
     )
     date_generated: Mapped[datetime] = mapped_column(
@@ -287,39 +397,4 @@ class Recommendation(Base):
     )
     days_to_move_to: Mapped[list[int]] = mapped_column(
         ARRAY(Integer), default=list
-    )
-
-
-class AuthTicket(Base):
-    """Одноразовый билет для входа во внешнее приложение."""
-
-    __tablename__ = "auth_tickets"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-
-    # Храним только хеш билета, а не сам секретный билет.
-    ticket_hash: Mapped[str] = mapped_column(
-        String(64),
-        unique=True,
-        index=True,
-    )
-
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
-        index=True,
-    )
-
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        index=True,
-    )
-
-    used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
     )
