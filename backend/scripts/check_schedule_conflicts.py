@@ -1,10 +1,11 @@
-
 from sqlalchemy import select
 
 from database import SessionLocal
 from models import (
+    AcademicYear,
     Class,
     Schedule,
+    School,
     Subject,
     Teacher,
     TeachingAssignment,
@@ -18,9 +19,15 @@ def check_schedule_conflicts():
             select(
                 Schedule,
                 TeachingAssignment,
+                Class.id,
+                Class.code,
                 Class.name,
+                School.id,
+                School.short_name,
+                AcademicYear.name,
                 Subject.name,
-                Teacher.id,
+                Teacher.user_id,
+                User.id,
                 User.full_name,
             )
             .join(
@@ -30,6 +37,14 @@ def check_schedule_conflicts():
             .join(
                 Class,
                 TeachingAssignment.class_id == Class.id,
+            )
+            .join(
+                School,
+                TeachingAssignment.school_id == School.id,
+            )
+            .join(
+                AcademicYear,
+                TeachingAssignment.academic_year_id == AcademicYear.id,
             )
             .join(
                 Subject,
@@ -43,21 +58,45 @@ def check_schedule_conflicts():
                 User,
                 Teacher.user_id == User.id,
             )
-            .order_by(Schedule.date, Schedule.lesson_number)
+            .order_by(
+                Schedule.date,
+                Schedule.lesson_number,
+                School.id,
+                Class.id,
+            )
         ).all()
 
         lessons = []
 
-        for schedule, assignment, class_name, subject_name, teacher_id, teacher_name in rows:
+        for row in rows:
+            (
+                schedule,
+                assignment,
+                class_id,
+                class_code,
+                class_name,
+                school_id,
+                school_name,
+                academic_year_name,
+                subject_name,
+                teacher_user_id,
+                user_id,
+                teacher_name,
+            ) = row
+
             lessons.append({
                 "id": schedule.id,
                 "date": schedule.date,
                 "number": schedule.lesson_number,
+                "school_id": school_id,
+                "school_name": school_name,
+                "academic_year": academic_year_name,
+                "class_id": class_id,
+                "class_code": class_code,
                 "class_name": class_name,
-                "class_id": assignment.class_id,
                 "subgroup": assignment.subgroup,
                 "subject": subject_name,
-                "teacher_id": teacher_id,
+                "teacher_user_id": user_id,
                 "teacher_name": teacher_name,
                 "room": schedule.room,
             })
@@ -66,6 +105,7 @@ def check_schedule_conflicts():
 
         for i, first in enumerate(lessons):
             for second in lessons[i + 1:]:
+
                 # Сравниваем только уроки в одно время.
                 if (
                     first["date"] != second["date"]
@@ -73,8 +113,12 @@ def check_schedule_conflicts():
                 ):
                     continue
 
-                # Один учитель не может вести два урока одновременно.
-                if first["teacher_id"] == second["teacher_id"]:
+                # Один пользователь не может вести два урока одновременно,
+                # даже если он зарегистрирован учителем в разных школах.
+                if (
+                    first["teacher_user_id"]
+                    == second["teacher_user_id"]
+                ):
                     conflicts.append(
                         (
                             "УЧИТЕЛЬ",
@@ -84,9 +128,11 @@ def check_schedule_conflicts():
                         )
                     )
 
-                # Один кабинет не может использоваться дважды одновременно.
+                # Один кабинет нельзя использовать одновременно
+                # в пределах одной школы.
                 if (
-                    first["room"]
+                    first["school_id"] == second["school_id"]
+                    and first["room"]
                     and second["room"]
                     and first["room"].strip().casefold()
                     == second["room"].strip().casefold()
@@ -96,7 +142,10 @@ def check_schedule_conflicts():
                             "КАБИНЕТ",
                             first,
                             second,
-                            f'Кабинет {first["room"]} занят дважды',
+                            (
+                                f'{first["school_name"]}: '
+                                f'кабинет {first["room"]} занят дважды'
+                            ),
                         )
                     )
 
@@ -120,8 +169,10 @@ def check_schedule_conflicts():
                                 first,
                                 second,
                                 (
-                                    f'{first["class_name"]}: пересекаются '
-                                    f'подгруппы {first_group} и {second_group}'
+                                    f'{first["class_name"]} '
+                                    f'({first["class_code"]}): '
+                                    f'пересекаются подгруппы '
+                                    f'{first_group} и {second_group}'
                                 ),
                             )
                         )
@@ -134,20 +185,35 @@ def check_schedule_conflicts():
 
         for conflict_type, first, second, description in conflicts:
             print(f"[{conflict_type}] {description}")
-            print(
-                f'  Урок ID {first["id"]}: '
-                f'{first["date"]}, урок №{first["number"]}, '
-                f'{first["class_name"]}, {first["subject"]}, '
-                f'{first["teacher_name"]}, кабинет {first["room"]}, '
-                f'подгруппа {first["subgroup"]}'
-            )
-            print(
-                f'  Урок ID {second["id"]}: '
-                f'{second["date"]}, урок №{second["number"]}, '
-                f'{second["class_name"]}, {second["subject"]}, '
-                f'{second["teacher_name"]}, кабинет {second["room"]}, '
-                f'подгруппа {second["subgroup"]}'
-            )
+
+            for lesson in (first, second):
+                print(
+                    f'  Урок ID {lesson["id"]}: '
+                    f'{lesson["date"]}, урок №{lesson["number"]}'
+                )
+                print(
+                    f'    Школа: {lesson["school_name"]}'
+                )
+                print(
+                    f'    Учебный год: {lesson["academic_year"]}'
+                )
+                print(
+                    f'    Класс: {lesson["class_name"]} '
+                    f'({lesson["class_code"]})'
+                )
+                print(
+                    f'    Предмет: {lesson["subject"]}'
+                )
+                print(
+                    f'    Учитель: {lesson["teacher_name"]}'
+                )
+                print(
+                    f'    Кабинет: {lesson["room"]}'
+                )
+                print(
+                    f'    Подгруппа: {lesson["subgroup"]}'
+                )
+
             print()
 
 

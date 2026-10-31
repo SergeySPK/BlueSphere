@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from calendar import monthrange
 
 from sqlalchemy import select
 
@@ -14,7 +15,9 @@ from models import (
     User,
 )
 
-from calendar import monthrange
+
+SCHOOL_SHORT_NAME = "Школа № 1"
+ACADEMIC_YEAR_NAME = "2026–2027"
 
 today = date.today()
 first_day = today.replace(day=1)
@@ -25,6 +28,7 @@ LESSON_DATES = [
     for offset in range((last_day - first_day).days + 1)
     if (first_day + timedelta(days=offset)).weekday() < 5
 ]
+
 
 TEACHERS_DATA = [
     ("demo-teacher-1", "Сидоров Сергей Сергеевич"),
@@ -55,6 +59,7 @@ LESSON_DETAILS = {
 }
 
 ENGLISH_ROOMS = {1: "108", 2: "109"}
+
 BASE_SUBJECTS = [
     "Русский язык",
     "Математика",
@@ -89,19 +94,28 @@ EXISTING_PLANS = {
 }
 
 
-def make_lesson_plan(class_id, lesson_date):
-    if lesson_date == date(2026, 9, 9) and class_id in EXISTING_PLANS:
-        return EXISTING_PLANS[class_id]
+def make_lesson_plan(class_code, lesson_date):
+    if lesson_date == date(2026, 9, 9) and class_code in EXISTING_PLANS:
+        return EXISTING_PLANS[class_code]
 
-    grade = int("".join(char for char in class_id if char.isdigit()))
-    parallel = class_id[-1]
-    parallel_index = {"a": 0, "b": 1, "v": 2, "g": 3}.get(parallel, 0)
+    grade = int("".join(char for char in class_code if char.isdigit()))
+    parallel = class_code[-1]
+
+    parallel_index = {
+        "a": 0,
+        "b": 1,
+        "v": 2,
+        "g": 3,
+    }.get(parallel, 0)
 
     # Меняем порядок предметов между классами и датами.
     shift = (grade + parallel_index + lesson_date.day) % len(BASE_SUBJECTS)
     subjects = BASE_SUBJECTS[shift:] + BASE_SUBJECTS[:shift]
 
-    return [(subject, number) for number, subject in enumerate(subjects, 1)]
+    return [
+        (subject, number)
+        for number, subject in enumerate(subjects, 1)
+    ]
 
 
 def get_or_create_teacher(session, school, sferum_id, full_name):
@@ -110,7 +124,10 @@ def get_or_create_teacher(session, school, sferum_id, full_name):
     )
 
     if user is None:
-        user = User(sferum_id=sferum_id, full_name=full_name)
+        user = User(
+            sferum_id=sferum_id,
+            full_name=full_name,
+        )
         session.add(user)
         session.flush()
 
@@ -122,7 +139,10 @@ def get_or_create_teacher(session, school, sferum_id, full_name):
     )
 
     if teacher is None:
-        teacher = Teacher(user_id=user.id, school_id=school.id)
+        teacher = Teacher(
+            user_id=user.id,
+            school_id=school.id,
+        )
         session.add(teacher)
         session.flush()
 
@@ -138,7 +158,10 @@ def get_or_create_subject(session, school, name):
     )
 
     if subject is None:
-        subject = Subject(school_id=school.id, name=name)
+        subject = Subject(
+            school_id=school.id,
+            name=name,
+        )
         session.add(subject)
         session.flush()
 
@@ -146,10 +169,16 @@ def get_or_create_subject(session, school, name):
 
 
 def get_or_create_assignment(
-    session, teacher, school_class, subject, academic_year, subgroup
+    session,
+    teacher,
+    school_class,
+    subject,
+    academic_year,
+    subgroup,
 ):
     assignment = session.scalar(
         select(TeachingAssignment).where(
+            TeachingAssignment.school_id == school_class.school_id,
             TeachingAssignment.teacher_id == teacher.id,
             TeachingAssignment.class_id == school_class.id,
             TeachingAssignment.subject_id == subject.id,
@@ -160,6 +189,7 @@ def get_or_create_assignment(
 
     if assignment is None:
         assignment = TeachingAssignment(
+            school_id=school_class.school_id,
             teacher_id=teacher.id,
             class_id=school_class.id,
             subject_id=subject.id,
@@ -173,12 +203,18 @@ def get_or_create_assignment(
 
 
 def get_or_create_lesson(
-    session, assignment, lesson_date, lesson_number, room, lesson_type
+    session,
+    assignment,
+    lesson_date,
+    lesson_number,
+    room,
+    lesson_type,
 ):
     lesson = session.scalar(
         select(Schedule).where(
             Schedule.assignment_id == assignment.id,
             Schedule.date == lesson_date,
+            Schedule.lesson_number == lesson_number,
         )
     )
 
@@ -194,49 +230,78 @@ def get_or_create_lesson(
         session.flush()
         return True
 
+    # Существующую запись не перезаписываем.
     return False
 
 
 def seed_schedule():
     with SessionLocal() as session:
         school = session.scalar(
-            select(School).where(School.short_name == "Школа № 1")
+            select(School).where(
+                School.short_name == SCHOOL_SHORT_NAME
+            )
         )
+
         if school is None:
-            raise RuntimeError("Сначала запусти seed.py: школа не найдена.")
+            raise RuntimeError(
+                "Сначала запусти seed.py: школа не найдена."
+            )
 
         academic_year = session.scalar(
             select(AcademicYear).where(
                 AcademicYear.school_id == school.id,
-                AcademicYear.name == "2026–2027",
+                AcademicYear.name == ACADEMIC_YEAR_NAME,
             )
         )
+
         if academic_year is None:
-            raise RuntimeError("Сначала запусти seed.py: учебный год не найден.")
+            raise RuntimeError(
+                "Сначала запусти seed.py: учебный год не найден."
+            )
+
+        if not academic_year.is_active:
+            raise RuntimeError(
+                f"Учебный год {academic_year.name} не является активным."
+            )
 
         classes = session.scalars(
-            select(Class).where(Class.school_id == school.id)
+            select(Class)
+            .where(
+                Class.school_id == school.id,
+                Class.academic_year_id == academic_year.id,
+            )
+            .order_by(Class.code)
         ).all()
+
         if not classes:
-            raise RuntimeError("Классы не найдены. Сначала запусти seed.py.")
+            raise RuntimeError(
+                "Классы не найдены. Сначала запусти seed.py."
+            )
 
         teachers = {
             sferum_id: get_or_create_teacher(
-                session, school, sferum_id, full_name
+                session,
+                school,
+                sferum_id,
+                full_name,
             )
             for sferum_id, full_name in TEACHERS_DATA
         }
+
         subjects = {
             name: get_or_create_subject(session, school, name)
             for name in SUBJECT_NAMES
         }
 
         created_count = 0
-        updated_count = 0
+        existing_count = 0
 
         for lesson_date in LESSON_DATES:
             for school_class in classes:
-                plan = make_lesson_plan(school_class.id, lesson_date)
+                plan = make_lesson_plan(
+                    school_class.code,
+                    lesson_date,
+                )
 
                 for subject_name, lesson_number in plan:
                     subject = subjects[subject_name]
@@ -256,9 +321,9 @@ def seed_schedule():
                             room = ENGLISH_ROOMS[subgroup]
                             lesson_type = "Обычный урок"
                         else:
-                            teacher_key, room, lesson_type = LESSON_DETAILS[
-                                subject_name
-                            ]
+                            teacher_key, room, lesson_type = (
+                                LESSON_DETAILS[subject_name]
+                            )
 
                         assignment = get_or_create_assignment(
                             session,
@@ -281,15 +346,17 @@ def seed_schedule():
                         if created:
                             created_count += 1
                         else:
-                            updated_count += 1
+                            existing_count += 1
 
         session.commit()
 
         print("Демонстрационное расписание подготовлено.")
+        print(f"Школа: {school.short_name}")
+        print(f"Учебный год: {academic_year.name}")
         print(f"Период: {LESSON_DATES[0]} — {LESSON_DATES[-1]}")
         print(f"Классов обработано: {len(classes)}")
         print(f"Новых записей расписания: {created_count}")
-        print(f"Существующих записей проверено/обновлено: {updated_count}")
+        print(f"Уже существующих записей пропущено: {existing_count}")
 
 
 if __name__ == "__main__":
