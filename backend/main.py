@@ -1,10 +1,12 @@
+from pathlib import Path
+from dotenv import load_dotenv
 from datetime import date as PythonDate, datetime, timedelta, timezone
 import calendar
 
-from fastapi import FastAPI, Depends, HTTPException, Response, status, Header
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.exc import IntegrityError
 
@@ -12,11 +14,11 @@ from database import SessionLocal
 from models import (
     AcademicYear,
     Administrator,
-    AuthTicket,
     Class,
     EditingSession,
     Recommendation,
     Schedule,
+    School,
     Student,
     Subject,
     Survey,
@@ -25,17 +27,19 @@ from models import (
     User,
 )
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Dict, Optional
 
 import hashlib
 import jwt
-import secrets
 import hmac
 import json
 import os
 import time
 from urllib.parse import parse_qsl
+
+ENV_FILE = Path(__file__).resolve().parent / ".env"
+load_dotenv(ENV_FILE)
 
 app = FastAPI(title="Blue Sphere API", docs_url="/docs", redoc_url=None)
 
@@ -135,13 +139,232 @@ def get_current_user(
     return user
 
 
+def get_user_access(
+    user: User,
+    db: Session,
+) -> tuple[set[str], set[int]]:
+    """Возвращает актуальные роли пользователя и доступные ему классы."""
+
+    roles: set[str] = set()
+    class_ids: set[int] = set()
+
+    # Учитель может иметь назначения в нескольких школах.
+    teachers = db.scalars(
+        select(Teacher).where(Teacher.user_id == user.id)
+    ).all()
+
+    if teachers:
+        roles.add("teacher")
+
+        teacher_ids = [teacher.id for teacher in teachers]
+
+        assigned_class_ids = db.scalars(
+            select(TeachingAssignment.class_id).where(
+                TeachingAssignment.teacher_id.in_(teacher_ids)
+            )
+        ).all()
+
+        class_ids.update(assigned_class_ids)
+
+    # Администратор имеет доступ к классам своих школ.
+    admin_school_ids = db.scalars(
+        select(Administrator.school_id).where(
+            Administrator.user_id == user.id
+        )
+    ).all()
+
+    if admin_school_ids:
+        roles.add("admin")
+
+        admin_class_ids = db.scalars(
+            select(Class.id).where(
+                Class.school_id.in_(admin_school_ids)
+            )
+        ).all()
+
+        class_ids.update(admin_class_ids)
+
+    # Ученик имеет доступ только к собственному классу.
+    student = db.scalar(
+        select(Student).where(Student.user_id == user.id)
+    )
+
+    if student is not None:
+        roles.add("student")
+        class_ids.add(student.class_id)
+
+    return roles, class_ids
+
+
+def get_user_school_ids(
+    user: User,
+    db: Session,
+) -> set[int]:
+    """Возвращает ID школ, к которым у пользователя есть доступ."""
+
+    school_ids: set[int] = set()
+
+    # Учитель имеет доступ к школе, в которой он зарегистрирован.
+    teacher_school_ids = db.scalars(
+        select(Teacher.school_id).where(
+            Teacher.user_id == user.id
+        )
+    ).all()
+
+    school_ids.update(teacher_school_ids)
+
+    # Администратор имеет доступ к своим школам.
+    admin_school_ids = db.scalars(
+        select(Administrator.school_id).where(
+            Administrator.user_id == user.id
+        )
+    ).all()
+
+    school_ids.update(admin_school_ids)
+
+    # Ученик получает доступ к школе своего текущего класса.
+    student_school_id = db.scalar(
+        select(Class.school_id)
+        .join(Student, Student.class_id == Class.id)
+        .where(Student.user_id == user.id)
+    )
+
+    if student_school_id is not None:
+        school_ids.add(student_school_id)
+
+    return school_ids
+
+
+def require_school_access(
+    school_id: int,
+    user: User,
+    db: Session,
+) -> School:
+    """Проверяет доступ пользователя к школе."""
+
+    school = db.scalar(
+        select(School).where(School.id == school_id)
+    )
+
+    if school is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Школа не найдена",
+        )
+
+    allowed_school_ids = get_user_school_ids(user, db)
+
+    if school_id not in allowed_school_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="У вас нет доступа к этой школе",
+        )
+
+    return school
+
+
+def require_class_access(
+    class_code: str,
+    user: User,
+    db: Session,
+    allowed_roles: set[str] | None = None,
+) -> Class:
+    """Находит класс в единственной доступной школе и проверяет права."""
+
+    school_ids = get_user_school_ids(user, db)
+
+    if not school_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="У вас нет доступа к этой школе",
+        )
+
+    if len(school_ids) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Для работы с несколькими школами используйте новый маршрут с school_id",
+        )
+
+    school_id = next(iter(school_ids))
+
+    school_class = db.scalar(
+        select(Class).where(
+            Class.school_id == school_id,
+            Class.code == class_code,
+        )
+    )
+
+    if school_class is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Класс не найден",
+        )
+
+    roles, class_ids = get_user_access(user, db)
+
+    if allowed_roles is not None and not roles.intersection(allowed_roles):
+        raise HTTPException(
+            status_code=403,
+            detail="У вашей роли нет доступа к этому разделу",
+        )
+
+    if school_class.id not in class_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="У вас нет доступа к этому классу",
+        )
+
+    return school_class
+
+
+def require_school_class_access(
+    school_id: int,
+    class_code: str,
+    user: User,
+    db: Session,
+    allowed_roles: set[str] | None = None,
+) -> Class:
+    """Находит класс внутри конкретной школы и проверяет права доступа."""
+
+    # Проверяем, что пользователь имеет доступ к школе.
+    require_school_access(school_id, user, db)
+
+    # Ищем класс одновременно по школе и публичному коду.
+    school_class = db.scalar(
+        select(Class).where(
+            Class.school_id == school_id,
+            Class.code == class_code,
+        )
+    )
+
+    if school_class is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Класс не найден",
+        )
+
+    roles, class_ids = get_user_access(user, db)
+
+    if allowed_roles is not None and not roles.intersection(allowed_roles):
+        raise HTTPException(
+            status_code=403,
+            detail="У вашей роли нет доступа к этому разделу",
+        )
+
+    if school_class.id not in class_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="У вас нет доступа к этому классу",
+        )
+
+    return school_class
+
+
 # Разрешённые адреса Flutter-приложения.
 # На хостинге API_BASE_URL задаётся через переменные окружения.
 allowed_origins = [
     origin.strip()
-    for origin in os.getenv(
-        "API_BASE_URL",
-    ).split(",")
+    for origin in os.getenv("API_BASE_URL", "").split(",")
     if origin.strip()
 ]
 
@@ -161,6 +384,15 @@ class SchoolClass(BaseModel):
     id: str
     name: str
 
+class ActiveAcademicYear(BaseModel):
+    id: int
+    name: str
+
+class AccessibleSchool(BaseModel):
+    id: int
+    name: str
+    active_academic_year: Optional[ActiveAcademicYear] = None
+
 class LoadDay(BaseModel):
     day: int
     level: int  # 0 — перегруз, 4 — пусто
@@ -179,34 +411,15 @@ class UserProfile(BaseModel):
     sferum_id: str
     roles: List[str]
     class_ids: List[str]
-
+    schools: List[AccessibleSchool] = Field(default_factory=list)
 
 class AuthResponse(UserProfile):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
 
-
 class AuthRequest(BaseModel):
     init_data: str
-
-
-class AuthTicketCreateRequest(BaseModel):
-    max_user_id: str = Field(min_length=1, max_length=100)
-
-
-class AuthTicketCreateResponse(BaseModel):
-    ticket: str
-    expires_in: int
-
-
-class AuthTicketExchangeRequest(BaseModel):
-    ticket: str = Field(min_length=1, max_length=200)
-
-
-class AuthTicketExchangeResponse(AuthResponse):
-    pass
-
 
 # Модели для работы с расписанием дня
 class Lesson(BaseModel):
@@ -220,7 +433,15 @@ class Lesson(BaseModel):
     updated_by: Optional[str] = None # ФИО того, кто менял
 
 class LessonUpdateRequest(BaseModel):
-    lesson_type: str
+    lesson_type: str = Field(min_length=1, max_length=150)
+
+    @field_validator("lesson_type")
+    @classmethod
+    def validate_lesson_type(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Тип урока не может быть пустым")
+        return value
 
 
 def validate_max_init_data(init_data: str) -> dict:
@@ -350,7 +571,6 @@ def validate_max_init_data(init_data: str) -> dict:
     }
 
 
-
 # ==========================================
 # 2. ЭНДПОИНТЫ (API)
 # ==========================================
@@ -360,73 +580,16 @@ async def root():
     return {"message": "Blue Sphere API is running!"}
 
 
-
-def build_auth_response(user: User, db: Session) -> AuthResponse:
-    """Формирует профиль пользователя и выдаёт JWT."""
-
-    roles = []
-    class_ids = set()
-
-    # Учитель: определяем роль и классы по назначениям.
-    teacher = db.scalar(
-        select(Teacher).where(Teacher.user_id == user.id)
-    )
-
-    if teacher is not None:
-        roles.append("teacher")
-
-        teacher_class_ids = db.scalars(
-            select(TeachingAssignment.class_id)
-            .where(TeachingAssignment.teacher_id == teacher.id)
-        ).all()
-
-        class_ids.update(teacher_class_ids)
-
-    # Администратор: определяем роль и доступные ему классы.
-    admin_school_ids = db.scalars(
-        select(Administrator.school_id)
-        .where(Administrator.user_id == user.id)
-    ).all()
-
-    if admin_school_ids:
-        roles.append("admin")
-
-        admin_class_ids = db.scalars(
-            select(Class.id)
-            .where(Class.school_id.in_(admin_school_ids))
-        ).all()
-
-        class_ids.update(admin_class_ids)
-
-    # Ученик: доступ к своему классу.
-    student = db.scalar(
-        select(Student).where(Student.user_id == user.id)
-    )
-
-    if student is not None:
-        roles.append("student")
-        class_ids.add(student.class_id)
-
-    access_token, expires_in = create_access_token(user)
-
-    return AuthResponse(
-        sferum_id=user.sferum_id,
-        roles=roles,
-        class_ids=sorted(class_ids),
-        access_token=access_token,
-        expires_in=expires_in,
-    )
-
-
-
 @app.post("/api/auth", response_model=AuthResponse)
 async def auth_user(
     request: AuthRequest,
     db: Session = Depends(get_db),
 ):
+    # Проверяем подлинность данных, полученных от MAX.
     verified_user = validate_max_init_data(request.init_data)
     sferum_id = verified_user["sferum_id"]
 
+    # Вход через MAX не означает автоматическую регистрацию.
     user = db.scalar(
         select(User).where(User.sferum_id == sferum_id)
     )
@@ -437,145 +600,188 @@ async def auth_user(
             detail="Пользователь не зарегистрирован в Blue Sphere",
         )
 
-    return build_auth_response(user, db)
+    # Получаем актуальные роли и числовые ID доступных классов.
+    roles, allowed_class_ids = get_user_access(user, db)
+
+    # Получаем школы, к которым у пользователя есть доступ.
+    school_ids = set()
+
+    teacher_school_ids = db.scalars(
+        select(Teacher.school_id).where(
+            Teacher.user_id == user.id
+        )
+    ).all()
+
+    admin_school_ids = db.scalars(
+        select(Administrator.school_id).where(
+            Administrator.user_id == user.id
+        )
+    ).all()
+
+    school_ids.update(teacher_school_ids)
+    school_ids.update(admin_school_ids)
+
+    # Для ученика определяем школу по его текущему классу.
+    student = db.scalar(
+        select(Student).where(Student.user_id == user.id)
+    )
+
+    if student is not None:
+        student_school_id = db.scalar(
+            select(Class.school_id).where(
+                Class.id == student.class_id
+            )
+        )
+
+        if student_school_id is not None:
+            school_ids.add(student_school_id)
+
+    # Получаем информацию о доступных школах.
+    schools = []
+
+    if school_ids:
+        school_records = db.scalars(
+            select(School)
+            .where(School.id.in_(school_ids))
+            .order_by(School.id)
+        ).all()
+
+        for school in school_records:
+            active_year = db.scalar(
+                select(AcademicYear).where(
+                    AcademicYear.school_id == school.id,
+                    AcademicYear.is_active.is_(True),
+                )
+            )
+
+            schools.append(
+                AccessibleSchool(
+                    id=school.id,
+                    name=school.full_name,
+                    active_academic_year=(
+                        ActiveAcademicYear(
+                            id=active_year.id,
+                            name=active_year.name,
+                        )
+                        if active_year is not None
+                        else None
+                    ),
+                )
+            )
+
+    # Преобразуем числовые ID классов в публичные коды.
+    # Старый frontend продолжает получать class_ids вида "5а".
+    class_codes = db.scalars(
+        select(Class.code)
+        .where(Class.id.in_(allowed_class_ids))
+        .order_by(Class.code)
+    ).all() if allowed_class_ids else []
+
+    access_token, expires_in = create_access_token(user)
+
+    return AuthResponse(
+        sferum_id=user.sferum_id,
+        roles=sorted(roles),
+        class_ids=class_codes,
+        schools=schools,
+        access_token=access_token,
+        expires_in=expires_in,
+    )
 
 
-
-AUTH_TICKET_EXPIRE_SECONDS = 60
-
-
-@app.post(
-    "/api/auth/ticket",
-    response_model=AuthTicketCreateResponse,
-)
-def create_auth_ticket(
-    request: AuthTicketCreateRequest,
-    x_bot_secret: Optional[str] = Header(
-        default=None,
-        alias="X-Bot-Secret",
-    ),
+@app.get("/api/schools", response_model=List[AccessibleSchool])
+def get_schools(
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Создаёт одноразовый билет для доверенного бота."""
+    """Возвращает школы, доступные авторизованному пользователю."""
 
-    expected_secret = os.getenv("BOT_INTERNAL_SECRET")
+    allowed_school_ids = get_user_school_ids(current_user, db)
 
-    if (
-        not expected_secret
-        or not x_bot_secret
-        or not hmac.compare_digest(x_bot_secret, expected_secret)
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="Недостаточно прав",
+    if not allowed_school_ids:
+        return []
+
+    schools = db.scalars(
+        select(School)
+        .where(School.id.in_(allowed_school_ids))
+        .order_by(School.id)
+    ).all()
+
+    academic_years = db.scalars(
+        select(AcademicYear).where(
+            AcademicYear.school_id.in_(allowed_school_ids),
+            AcademicYear.is_active.is_(True),
+        )
+    ).all()
+
+    # Связываем активные учебные годы с соответствующими школами.
+    active_years_by_school = {
+        academic_year.school_id: academic_year
+        for academic_year in academic_years
+    }
+
+    result = []
+
+    for school in schools:
+        active_year = active_years_by_school.get(school.id)
+
+        result.append(
+            AccessibleSchool(
+                id=school.id,
+                name=school.full_name,
+                active_academic_year=(
+                    ActiveAcademicYear(
+                        id=active_year.id,
+                        name=active_year.name,
+                    )
+                    if active_year is not None
+                    else None
+                ),
+            )
         )
 
-    user = db.scalar(
-        select(User).where(User.sferum_id == request.max_user_id)
-    )
-
-    if user is None:
-        raise HTTPException(
-            status_code=403,
-            detail="Пользователь не зарегистрирован в Blue Sphere",
-        )
-
-    raw_ticket = secrets.token_urlsafe(32)
-    ticket_hash = hashlib.sha256(raw_ticket.encode("utf-8")).hexdigest()
-    now = datetime.now(timezone.utc)
-
-    ticket_record = AuthTicket(
-        ticket_hash=ticket_hash,
-        user_id=user.id,
-        expires_at=now + timedelta(seconds=AUTH_TICKET_EXPIRE_SECONDS),
-    )
-
-    try:
-        db.add(ticket_record)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Не удалось создать билет авторизации",
-        )
-
-    return AuthTicketCreateResponse(
-        ticket=raw_ticket,
-        expires_in=AUTH_TICKET_EXPIRE_SECONDS,
-    )
+    return result
 
 
-@app.post(
-    "/api/auth/ticket/exchange",
-    response_model=AuthTicketExchangeResponse,
+@app.get(
+    "/api/schools/{school_id}/classes",
+    response_model=Dict[str, List[SchoolClass]],
 )
-def exchange_auth_ticket(
-    request: AuthTicketExchangeRequest,
+def get_school_classes(
+    school_id: int,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Однократно обменивает билет на JWT."""
+    """Возвращает доступные пользователю классы выбранной школы."""
 
-    ticket_hash = hashlib.sha256(
-        request.ticket.encode("utf-8")
-    ).hexdigest()
+    # Сначала проверяем доступ к самой школе.
+    require_school_access(school_id, current_user, db)
 
-    now = datetime.now(timezone.utc)
+    # Получаем классы, доступные пользователю по его ролям.
+    _, allowed_class_ids = get_user_access(current_user, db)
 
-    # Одно атомарное обновление не позволяет погасить билет дважды.
-    result = db.execute(
-        update(AuthTicket)
-        .where(
-            AuthTicket.ticket_hash == ticket_hash,
-            AuthTicket.used_at.is_(None),
-            AuthTicket.expires_at > now,
-        )
-        .values(used_at=now)
-        .returning(AuthTicket.user_id)
-    )
+    if not allowed_class_ids:
+        return {}
 
-    user_id = result.scalar_one_or_none()
-
-    if user_id is None:
-        db.rollback()
-        raise HTTPException(
-            status_code=401,
-            detail="Билет недействителен, истёк или уже использован",
-        )
-
-    user = db.get(User, user_id)
-
-    if user is None:
-        db.rollback()
-        raise HTTPException(
-            status_code=401,
-            detail="Пользователь не найден",
-        )
-
-    # Сначала фиксируем погашение билета в БД.
-    db.commit()
-
-    return build_auth_response(user, db)
-
-
-
-@app.get("/api/classes", response_model=Dict[str, List[SchoolClass]])
-def get_classes(db: Session = Depends(get_db)):
-    """
-    Возвращает список классов из PostgreSQL,
-    сгруппированных по параллелям.
-    """
+    # Оставляем только классы выбранной школы,
+    # к которым у пользователя есть доступ.
     classes = db.scalars(
-        select(Class).order_by(Class.id)
+        select(Class)
+        .where(
+            Class.school_id == school_id,
+            Class.id.in_(allowed_class_ids),
+        )
+        .order_by(Class.code)
     ).all()
 
     result: Dict[str, List[SchoolClass]] = {}
 
     for school_class in classes:
-        # ID "5a" соответствует параллели "5 класс".
+        # Номер параллели берём из публичного кода,
+        # например из "5a" получаем "5".
         grade = "".join(
             character
-            for character in school_class.id
+            for character in school_class.code
             if character.isdigit()
         )
 
@@ -586,7 +792,64 @@ def get_classes(db: Session = Depends(get_db)):
 
         result.setdefault(group_name, []).append(
             SchoolClass(
-                id=school_class.id,
+                id=school_class.code,
+                name=school_class.name,
+            )
+        )
+
+    return result
+
+
+@app.get("/api/classes", response_model=Dict[str, List[SchoolClass]])
+def get_classes(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Возвращает классы, доступные авторизованному пользователю."""
+
+    allowed_school_ids = get_user_school_ids(current_user, db)
+
+    # Старый маршрут оставляем только для пользователей,
+    # у которых есть доступ ровно к одной школе.
+    if len(allowed_school_ids) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Для получения классов укажи школу",
+        )
+
+    school_id = next(iter(allowed_school_ids))
+
+    _, allowed_class_ids = get_user_access(current_user, db)
+
+    if not allowed_class_ids:
+        return {}
+
+    classes = db.scalars(
+        select(Class)
+        .where(
+            Class.school_id == school_id,
+            Class.id.in_(allowed_class_ids),
+        )
+        .order_by(Class.code)
+    ).all()
+
+    result: Dict[str, List[SchoolClass]] = {}
+
+    for school_class in classes:
+        grade = "".join(
+            character
+            for character in school_class.code
+            if character.isdigit()
+        )
+
+        if not grade:
+            continue
+
+        group_name = f"{grade} класс"
+
+        result.setdefault(group_name, []).append(
+            SchoolClass(
+                id=school_class.code,
                 name=school_class.name,
             )
         )
@@ -596,7 +859,7 @@ def get_classes(db: Session = Depends(get_db)):
 
 def get_daily_lesson_counts(
     db: Session,
-    class_id: str,
+    class_id: int,
     start_date: PythonDate,
     end_date: PythonDate,
 ) -> Dict[PythonDate, int]:
@@ -636,17 +899,13 @@ def get_load_level(lesson_count: int) -> int:
     return 4
 
 
-@app.get("/api/classes/{class_id}/heatmap", response_model=List[LoadDay])
-def get_heatmap(
-    class_id: str,
-    month: str = "09",
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Возвращает нагрузку и активное редактирование по дням месяца."""
-
-    if not db.get(Class, class_id):
-        raise HTTPException(status_code=404, detail="Класс не найден")
+def build_class_heatmap(
+    school_class: Class,
+    month: str,
+    current_user_id: int | None,
+    db: Session,
+) -> List[LoadDay]:
+    """Формирует тепловую карту нагрузки класса за месяц."""
 
     try:
         month_number = int(month)
@@ -664,11 +923,8 @@ def get_heatmap(
     end_date = PythonDate(year, month_number, days_in_month)
 
     counts = get_daily_lesson_counts(
-        db, class_id, start_date, end_date
+        db, school_class.id, start_date, end_date
     )
-
-    current_user_id = None
-    current_user_id = current_user.id
 
     now = datetime.now(timezone.utc)
 
@@ -683,7 +939,7 @@ def get_heatmap(
             EditingSession.schedule_id == Schedule.id,
         )
         .where(
-            TeachingAssignment.class_id == class_id,
+            TeachingAssignment.class_id == school_class.id,
             Schedule.date >= start_date,
             Schedule.date <= end_date,
             EditingSession.expires_at > now,
@@ -710,23 +966,63 @@ def get_heatmap(
     ]
 
 
-@app.get("/api/classes/{class_id}/summary", response_model=ClassStatus)
-def get_summary(
+@app.get("/api/classes/{class_id}/heatmap", response_model=List[LoadDay])
+def get_heatmap(
     class_id: str,
-    date: Optional[str] = None,
+    month: str = "09",
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Возвращает результат последнего реального опроса класса."""
+    """Старый маршрут получения тепловой карты."""
 
-    if not db.get(Class, class_id):
-        raise HTTPException(status_code=404, detail="Класс не найден")
+    school_class = require_class_access(
+        class_code=class_id,
+        user=current_user,
+        db=db,
+    )
+
+    return build_class_heatmap(
+        school_class=school_class,
+        month=month,
+        current_user_id=current_user.id,
+        db=db,
+    )
+
+
+@app.get("/api/schools/{school_id}/classes/{class_code}/heatmap", response_model=List[LoadDay])
+def get_school_heatmap(
+    school_id: int,
+    class_code: str,
+    month: str = "09",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Возвращает тепловую карту класса выбранной школы."""
+
+    school_class = require_school_class_access(
+        school_id=school_id,
+        class_code=class_code,
+        user=current_user,
+        db=db,
+    )
+
+    return build_class_heatmap(
+        school_class=school_class,
+        month=month,
+        current_user_id=current_user.id,
+        db=db,
+    )
+
+
+def build_class_summary(school_class: Class, db: Session) -> ClassStatus:
+    """Формирует сводку по последнему реальному опросу класса."""
 
     survey_result = db.execute(
         select(
             Survey.date,
             func.avg(Survey.score),
         )
-        .where(Survey.class_id == class_id)
+        .where(Survey.class_id == school_class.id)
         .group_by(Survey.date)
         .order_by(Survey.date.desc())
         .limit(1)
@@ -748,23 +1044,60 @@ def get_summary(
     )
 
 
-@app.get(
-    "/api/classes/{class_id}/recommendations",
-    response_model=Recommendation,
-)
-def get_recommendations(
+@app.get("/api/classes/{class_id}/summary", response_model=ClassStatus)
+def get_summary(
     class_id: str,
-    month: Optional[str] = None,
+    date: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Старый маршрут получения сводки класса."""
+
+    school_class = require_class_access(
+        class_code=class_id,
+        user=current_user,
+        db=db,
+        allowed_roles={"teacher", "admin"},
+    )
+
+    return build_class_summary(school_class, db)
+
+
+@app.get("/api/schools/{school_id}/classes/{class_code}/summary", response_model=ClassStatus)
+def get_school_summary(
+    school_id: int,
+    class_code: str,
+    date: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Возвращает сводку класса выбранной школы."""
+
+    school_class = require_school_class_access(
+        school_id=school_id,
+        class_code=class_code,
+        user=current_user,
+        db=db,
+        allowed_roles={"teacher", "admin"},
+    )
+
+    return build_class_summary(school_class, db)
+
+
+
+def build_class_recommendations(
+    school_class: Class,
+    month: Optional[str],
+    db: Session,
+) -> Recommendation:
     """Рассчитывает рекомендации на основе реального расписания."""
 
-    if not db.get(Class, class_id):
-        raise HTTPException(status_code=404, detail="Класс не найден")
+    try:
+        month_number = int(month) if month else PythonDate.today().month
 
-    month_number = int(month) if month else PythonDate.today().month
-
-    if month_number < 1 or month_number > 12:
+        if month_number < 1 or month_number > 12:
+            raise ValueError
+    except (TypeError, ValueError):
         raise HTTPException(
             status_code=400,
             detail="Месяц должен быть указан числом от 01 до 12",
@@ -776,7 +1109,7 @@ def get_recommendations(
     end_date = PythonDate(year, month_number, days_in_month)
 
     counts = get_daily_lesson_counts(
-        db, class_id, start_date, end_date
+        db, school_class.id, start_date, end_date
     )
 
     # Рекомендации формируются только по дням,
@@ -818,6 +1151,54 @@ def get_recommendations(
     )
 
 
+@app.get("/api/classes/{class_id}/recommendations", response_model=Recommendation)
+def get_recommendations(
+    class_id: str,
+    month: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Старый маршрут получения рекомендаций."""
+
+    school_class = require_class_access(
+        class_code=class_id,
+        user=current_user,
+        db=db,
+        allowed_roles={"teacher", "admin"},
+    )
+
+    return build_class_recommendations(
+        school_class=school_class,
+        month=month,
+        db=db,
+    )
+
+
+@app.get("/api/schools/{school_id}/classes/{class_code}/recommendations", response_model=Recommendation)
+def get_school_recommendations(
+    school_id: int,
+    class_code: str,
+    month: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Возвращает рекомендации для класса выбранной школы."""
+
+    school_class = require_school_class_access(
+        school_id=school_id,
+        class_code=class_code,
+        user=current_user,
+        db=db,
+        allowed_roles={"teacher", "admin"},
+    )
+
+    return build_class_recommendations(
+        school_class=school_class,
+        month=month,
+        db=db,
+    )
+
+
 # ==========================================
 # 3. РАСПИСАНИЕ И РЕДАКТИРОВАНИЕ УРОКОВ (НОВОЕ)
 # ==========================================
@@ -833,13 +1214,13 @@ def format_teacher_name(full_name: str) -> str:
     return full_name
 
 
-@app.get("/api/classes/{class_id}/schedule", response_model=List[Lesson])
-def get_schedule(
-    class_id: str,
+def build_class_schedule(
+    school_class: Class,
     date: str,
-    db: Session = Depends(get_db),
-):
-    """Возвращает расписание класса на указанную дату из PostgreSQL."""
+    db: Session,
+) -> List[Lesson]:
+    """Формирует расписание класса на указанную дату."""
+
     try:
         requested_date = PythonDate.fromisoformat(date)
     except ValueError:
@@ -850,7 +1231,6 @@ def get_schedule(
 
     Editor = aliased(User)
 
-    
     rows = db.execute(
         select(
             Schedule,
@@ -880,10 +1260,13 @@ def get_schedule(
             Schedule.updated_by_user_id == Editor.id,
         )
         .where(
-            TeachingAssignment.class_id == class_id,
+            TeachingAssignment.class_id == school_class.id,
             Schedule.date == requested_date,
         )
-        .order_by(Schedule.lesson_number, TeachingAssignment.subgroup)
+        .order_by(
+            Schedule.lesson_number,
+            TeachingAssignment.subgroup,
+        )
     ).all()
 
     return [
@@ -909,6 +1292,44 @@ def get_schedule(
             editor_full_name,
         ) in rows
     ]
+
+
+@app.get("/api/classes/{class_id}/schedule", response_model=List[Lesson])
+def get_schedule(
+    class_id: str,
+    date: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Старый маршрут получения расписания."""
+
+    school_class = require_class_access(
+        class_code=class_id,
+        user=current_user,
+        db=db,
+    )
+
+    return build_class_schedule(school_class, date, db)
+
+
+@app.get("/api/schools/{school_id}/classes/{class_code}/schedule", response_model=List[Lesson])
+def get_school_schedule(
+    school_id: int,
+    class_code: str,
+    date: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Возвращает расписание класса выбранной школы."""
+
+    school_class = require_school_class_access(
+        school_id=school_id,
+        class_code=class_code,
+        user=current_user,
+        db=db,
+    )
+
+    return build_class_schedule(school_class, date, db)
 
 
 @app.put("/api/schedule/{lesson_id}", response_model=Lesson)
@@ -937,22 +1358,10 @@ def update_lesson(
 
     editor = current_user
 
-    assignment = db.scalar(
-        select(TeachingAssignment)
-        .join(
-            Teacher,
-            TeachingAssignment.teacher_id == Teacher.id,
-        )
-        .where(
-            TeachingAssignment.id == lesson.assignment_id,
-            Teacher.user_id == editor.id,
-        )
-    )
-
-    if assignment is None:
+    if not can_edit_lesson(lesson, editor, db):
         raise HTTPException(
             status_code=403,
-            detail="Вы можете редактировать только свои уроки.",
+            detail="У вас нет прав на редактирование этого урока.",
         )
 
     now = datetime.now(timezone.utc)
@@ -990,6 +1399,63 @@ def update_lesson(
 EDITING_SESSION_TTL_SECONDS = 60
 
 
+def can_edit_lesson(
+    lesson: Schedule,
+    user: User,
+    db: Session,
+) -> bool:
+    """Проверяет право учителя или администратора редактировать урок."""
+
+    # Проверяем, является ли пользователь учителем этого урока.
+    assignment = db.scalar(
+        select(TeachingAssignment)
+        .join(
+            Teacher,
+            TeachingAssignment.teacher_id == Teacher.id,
+        )
+        .join(
+            Class,
+            TeachingAssignment.class_id == Class.id,
+        )
+        .where(
+            TeachingAssignment.id == lesson.assignment_id,
+            Teacher.user_id == user.id,
+            Teacher.school_id == Class.school_id,
+            TeachingAssignment.academic_year_id == Class.academic_year_id,
+        )
+    )
+
+    if assignment is not None:
+        return True
+
+    # Получаем класс, к которому относится урок.
+    class_id = db.scalar(
+        select(TeachingAssignment.class_id).where(
+            TeachingAssignment.id == lesson.assignment_id
+        )
+    )
+
+    if class_id is None:
+        return False
+
+    school_id = db.scalar(
+        select(Class.school_id).where(Class.id == class_id)
+    )
+
+    if school_id is None:
+        return False
+
+    # Проверяем, является ли пользователь администратором этой школы.
+    administrator = db.scalar(
+        select(Administrator.id).where(
+            Administrator.user_id == user.id,
+            Administrator.school_id == school_id,
+        )
+    )
+
+    return administrator is not None
+
+
 def get_editing_user_and_lesson(
     lesson_id: str,
     user: User,
@@ -1012,22 +1478,10 @@ def get_editing_user_and_lesson(
             detail="Урок не найден.",
         )
 
-    assignment = db.scalar(
-        select(TeachingAssignment)
-        .join(
-            Teacher,
-            TeachingAssignment.teacher_id == Teacher.id,
-        )
-        .where(
-            TeachingAssignment.id == lesson.assignment_id,
-            Teacher.user_id == user.id,
-        )
-    )
-
-    if assignment is None:
+    if not can_edit_lesson(lesson, user, db):
         raise HTTPException(
             status_code=403,
-            detail="Вы можете редактировать только свои уроки.",
+            detail="У вас нет прав на редактирование этого урока.",
         )
 
     return lesson, user
