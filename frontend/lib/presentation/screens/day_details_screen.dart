@@ -131,7 +131,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                           return;
                         }
                         // отправляем на сервер
-                        final success = await ApiService.updateLesson(lesson.id, newType, 'demo-teacher-1');
+                        final success = await ApiService.updateLesson(lesson.id, newType);
                         if (!dialogContext.mounted) return;
                         // сообщаем серверу, что закончили
                         await ApiService.stopEditing(lesson.id);

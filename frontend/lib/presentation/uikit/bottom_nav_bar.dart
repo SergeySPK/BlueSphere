@@ -6,11 +6,21 @@ import 'colors.dart';
 class BottomNavBar extends StatelessWidget {
   final int currentIndex;
   final Function(int) onTap;
+  final bool isTeacher;
 
-  const BottomNavBar({super.key, required this.currentIndex, required this.onTap});
+  const BottomNavBar({super.key, required this.currentIndex, required this.onTap, required this.isTeacher});
 
   @override
   Widget build(BuildContext context) {
+    final List<BottomNavigationBarItem> items = [];
+
+    if (isTeacher) {
+      items.add(_buildItem('assets/school.png', 'Классы'));
+    }
+
+    items.add(_buildItem('assets/file.png', 'Нагрузка'));
+    items.add(_buildItem('assets/chat.png', 'Опросы'));
+
     return Container(
       color: background,
       child: Theme(
@@ -27,7 +37,7 @@ class BottomNavBar extends StatelessWidget {
           unselectedItemColor: text,
           selectedLabelStyle: TextStyle(fontFamily: 'SF Pro', fontWeight: FontWeight.w500, letterSpacing: 0.12),
           unselectedLabelStyle: TextStyle(fontFamily: 'SF Pro', fontWeight: FontWeight.w500, letterSpacing: 0.12),
-          items: [_buildItem('assets/school.png', 'Классы'), _buildItem('assets/file.png', 'Нагрузка'), _buildItem('assets/chat.png', 'Опросы')],
+          items: items,
         ),
       ),
     );

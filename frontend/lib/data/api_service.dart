@@ -9,6 +9,8 @@ class ApiService {
   static const String baseUrl = 'https://blue-sphere-bot.bothost.tech';
 
   static String? _token;
+  static List<dynamic>? _schools;
+  static List<String>? _roles;
 
   // 1. Авторизация
   static Future<Map<String, dynamic>?> auth(String initData) async {
@@ -18,6 +20,8 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         _token = data['access_token'];
+        _schools = data['schools'];
+        _roles = List<String>.from(data['roles'] ?? []);
         return data;
       } else {
         throw Exception(response.statusCode);
@@ -116,13 +120,9 @@ class ApiService {
   }
 
   // 7. Обновление типа урока
-  static Future<bool> updateLesson(String lessonId, String newType, String teacherSferumId) async {
+  static Future<bool> updateLesson(String lessonId, String newType) async {
     try {
-      final response = await http.put(
-        Uri.parse('$baseUrl/api/schedule/$lessonId'),
-        headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'},
-        body: jsonEncode({'lesson_type': newType, 'updated_by_sferum_id': teacherSferumId}),
-      );
+      final response = await http.put(Uri.parse('$baseUrl/api/schedule/$lessonId'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'}, body: jsonEncode({'lesson_type': newType}));
 
       if (response.statusCode == 200) {
         return true;

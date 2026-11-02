@@ -8,22 +8,45 @@ import 'package:vize/vize.dart';
 import 'package:flutter_max_miniapp/flutter_max_miniapp.dart';
 import 'package:blue_sphere/data/api_service.dart';
 
-// Точка входа в приложение
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  List<String> userRoles = [];
+  List<String> userClassIds = [];
+  String userName = '';
+
   try {
     final webApp = MaxWebApp();
     webApp.init();
     await webApp.enableVerticalSwipes();
+
+    // Получаем init_data из MAX
+    final initData = webApp.initData;
+
+    if (initData != null && initData.isNotEmpty) {
+      print('initData получен, авторизуемся...');
+      final authData = await ApiService.auth(initData);
+
+      if (authData != null) {
+        userRoles = List<String>.from(authData['roles'] ?? []);
+        userClassIds = List<String>.from(authData['class_ids'] ?? []);
+        print('Роли: $userRoles, Классы: $userClassIds');
+      }
+    } else {
+      print('initData пустой. Мы не в MAX или ошибка.');
+    }
   } catch (e) {
-    print('Ошибка инициализации: $e');
+    print('Ошибка инициализации или авторизации: $e');
   }
 
-  runApp(const MyApp());
+  runApp(MyApp(roles: userRoles, classIds: userClassIds));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final List<String> roles;
+  final List<String> classIds;
+
+  const MyApp({super.key, required this.roles, required this.classIds});
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +63,10 @@ class MyApp extends StatelessWidget {
           return Container(
             color: white,
             child: Center(
-              child: ConstrainedBox(constraints: BoxConstraints(maxWidth: 375), child: MainScreen()),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 375),
+                child: MainScreen(roles: roles, classIds: classIds),
+              ),
             ),
           );
         },
@@ -50,7 +76,10 @@ class MyApp extends StatelessWidget {
 }
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  final List<String> roles;
+  final List<String> classIds;
+
+  const MainScreen({super.key, required this.roles, required this.classIds});
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -61,33 +90,56 @@ class _MainScreenState extends State<MainScreen> {
   String _selectedClassId = 'Выберите класс';
   String _selectedClassName = 'Выберите класс';
 
+  bool get isTeacher => widget.roles.contains('teacher');
+
+  int get navItemCount => isTeacher ? 3 : 2;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!isTeacher && widget.classIds.isNotEmpty) {
+      _selectedClassId = widget.classIds.first;
+      _selectedClassName = 'Мой класс';
+    }
+
+    if (!isTeacher) {
+      _currentIndex = 0;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final List<Widget> screens = [
-      ClassesScreen(
-        onClassSelected: (id, name) {
-          setState(() {
-            _selectedClassId = id;
-            _selectedClassName = name;
-            _currentIndex = 1;
-          });
-        },
-      ),
+    final List<Widget> screens = [];
 
+    if (isTeacher) {
+      screens.add(
+        ClassesScreen(
+          onClassSelected: (id, name) {
+            setState(() {
+              _selectedClassId = id;
+              _selectedClassName = name;
+              _currentIndex = 1;
+            });
+          },
+        ),
+      );
+    }
+
+    screens.add(
       Navigator(
-        onGenerateRoute: (settings) {
-          return MaterialPageRoute(
-            builder: (context) => LoadScreen(classId: _selectedClassId, className: _selectedClassName, onGoToClasses: () => setState(() => _currentIndex = 0), onGoToSummary: () => setState(() => _currentIndex = 2)),
-          );
-        },
+        onGenerateRoute: (settings) => MaterialPageRoute(
+          builder: (context) => LoadScreen(classId: _selectedClassId, className: _selectedClassName, onGoToClasses: () => setState(() => _currentIndex = 0), onGoToSummary: () => setState(() => _currentIndex = isTeacher ? 2 : 1)),
+        ),
       ),
-      SurveysScreen(classId: _selectedClassId, className: _selectedClassName, onGoToClasses: () => setState(() => _currentIndex = 0)),
-    ];
+    );
+
+    screens.add(SurveysScreen(classId: _selectedClassId, className: _selectedClassName, onGoToClasses: () => setState(() => _currentIndex = 0)));
 
     return Scaffold(
       body: IndexedStack(index: _currentIndex, children: screens),
       bottomNavigationBar: BottomNavBar(
         currentIndex: _currentIndex,
+        isTeacher: isTeacher,
         onTap: (index) {
           setState(() {
             _currentIndex = index;
