@@ -1,15 +1,16 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import Date, Time, and_, case, cast, func, or_, select, update
 
 from database import SessionLocal
 from max_sender import create_max_bot, send_notification
 from models import (
     School,
+    Class,
     Student,
     SurveyInstance,
     SurveyNotification,
@@ -37,6 +38,52 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def is_notification_time_allowed(
+    now_utc: datetime,
+    survey_date,
+    timezone_name: str,
+) -> bool:
+    """
+    Проверяет, разрешена ли отправка уведомления
+    в местном времени школы.
+
+    В день опроса: 18:00–22:00.
+    На следующий день: 08:00–18:00.
+    После этого отправка прекращается.
+    """
+
+    if not timezone_name:
+        return False
+
+    try:
+        school_timezone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.error(
+            "Некорректный часовой пояс школы: %s",
+            timezone_name,
+        )
+        return False
+
+    local_now = now_utc.astimezone(school_timezone)
+    local_time = local_now.time().replace(tzinfo=None)
+
+    if local_now.date() == survey_date:
+        return (
+            datetime_time(18, 0)
+            <= local_time
+            < datetime_time(22, 0)
+        )
+
+    if local_now.date() == survey_date + timedelta(days=1):
+        return (
+            datetime_time(8, 0)
+            <= local_time
+            < datetime_time(18, 0)
+        )
+
+    return False
 
 
 def get_school_local_dates(session, now_utc: datetime) -> set:
@@ -75,9 +122,9 @@ def get_school_local_dates(session, now_utc: datetime) -> set:
 def run_scheduler_once() -> None:
     """
     Выполняет один цикл планировщика:
-    1. Определяет местные даты школ.
-    2. Создаёт экземпляры опросов.
-    3. Закрывает просроченные опросы.
+    1. Закрывает просроченные опросы.
+    2. Определяет местные даты школ.
+    3. Создаёт экземпляры опросов.
     4. Добавляет уведомления в очередь.
     """
 
@@ -236,11 +283,64 @@ def recover_stale_notifications(session, now_utc: datetime) -> int:
 
 def get_pending_notification(session, now_utc: datetime):
     """
-    Атомарно забирает одно уведомление из очереди.
+    Атомарно забирает одно доступное для отправки уведомление.
 
-    SKIP LOCKED позволяет нескольким процессам работать
-    с очередью без одновременного захвата одной записи.
+    Учитывает:
+    - временное окно школы;
+    - статус опроса;
+    - срок закрытия опроса;
+    - задержку между попытками;
+    - ограничение числа попыток.
+
+    SKIP LOCKED защищает от одновременного захвата
+    одного уведомления несколькими процессами.
     """
+
+    # Получаем только школы с корректными часовыми поясами.
+    timezone_names = session.scalars(
+        select(School.timezone)
+        .where(School.timezone.is_not(None))
+        .distinct()
+    ).all()
+
+    valid_timezones = []
+
+    for timezone_name in timezone_names:
+        try:
+            ZoneInfo(timezone_name)
+            valid_timezones.append(timezone_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.error(
+                "Пропускаем школу с некорректным часовым поясом: %s",
+                timezone_name,
+            )
+
+    if not valid_timezones:
+        return None
+
+    local_now = case(
+        (
+            School.timezone.in_(valid_timezones),
+            func.timezone(School.timezone, now_utc),
+        ),
+        else_=None,
+    )
+
+    local_date = cast(local_now, Date)
+    local_time = cast(local_now, Time)
+
+    send_window = or_(
+        and_(
+            local_date == SurveyInstance.survey_date,
+            local_time >= datetime_time(18, 0),
+            local_time < datetime_time(22, 0),
+        ),
+        and_(
+            local_date == SurveyInstance.survey_date + timedelta(days=1),
+            local_time >= datetime_time(8, 0),
+            local_time < datetime_time(18, 0),
+        ),
+    )
 
     result = session.execute(
         select(
@@ -250,6 +350,14 @@ def get_pending_notification(session, now_utc: datetime):
         .join(
             SurveyInstance,
             SurveyInstance.id == SurveyNotification.instance_id,
+        )
+        .join(
+            Class,
+            Class.id == SurveyInstance.class_id,
+        )
+        .join(
+            School,
+            School.id == Class.school_id,
         )
         .join(
             Student,
@@ -269,6 +377,8 @@ def get_pending_notification(session, now_utc: datetime):
             ),
             SurveyInstance.status == "open",
             SurveyInstance.closes_at > now_utc,
+            School.timezone.in_(valid_timezones),
+            send_window,
         )
         .order_by(
             SurveyNotification.created_at,
@@ -310,6 +420,102 @@ def get_pending_notification(session, now_utc: datetime):
     session.commit()
 
     return notification_id, max_user_id
+
+
+def reset_exhausted_notifications(
+    session,
+    now_utc: datetime,
+) -> int:
+    """
+    Возвращает в очередь уведомления, исчерпавшие три попытки
+    в день проведения опроса.
+
+    Повторная отправка разрешается только на следующий день
+    с 08:00 до 18:00 по местному времени школы.
+    Закрытые опросы не затрагиваются.
+    """
+
+    rows = session.execute(
+        select(
+            SurveyNotification,
+            SurveyInstance.survey_date,
+            School.timezone,
+        )
+        .join(
+            SurveyInstance,
+            SurveyInstance.id == SurveyNotification.instance_id,
+        )
+        .join(
+            Class,
+            Class.id == SurveyInstance.class_id,
+        )
+        .join(
+            School,
+            School.id == Class.school_id,
+        )
+        .where(
+            SurveyNotification.status == "failed",
+            SurveyNotification.attempt_count >= MAX_NOTIFICATION_ATTEMPTS,
+            or_(
+                SurveyNotification.error.is_(None),
+                SurveyNotification.error != "Некорректный MAX user_id.",
+            ),
+            SurveyInstance.status == "open",
+            SurveyInstance.closes_at > now_utc,
+        )
+    ).all()
+
+    reset_count = 0
+
+    for notification, survey_date, timezone_name in rows:
+        if not timezone_name:
+            continue
+
+        try:
+            school_timezone = ZoneInfo(timezone_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+
+        local_now = now_utc.astimezone(school_timezone)
+
+        local_time = local_now.time().replace(tzinfo=None)
+
+        # Сбрасываем попытки только на следующий день после опроса.
+        if local_now.date() != survey_date + timedelta(days=1):
+            continue
+
+        # Разрешённый интервал: с 08:00 до 17:59.
+        if not (
+            datetime_time(8, 0)
+            <= local_time
+            < datetime_time(18, 0)
+        ):
+            continue
+
+        last_attempt_at = notification.last_attempt_at
+
+        if last_attempt_at is not None:
+            last_attempt_date = last_attempt_at.astimezone(
+                school_timezone
+            ).date()
+
+            if local_now.date() <= last_attempt_date:
+                continue
+
+        notification.status = "pending"
+        notification.attempt_count = 0
+        notification.error = None
+        reset_count += 1
+
+    if reset_count:
+        session.commit()
+
+        logger.info(
+            "Возвращено в очередь уведомлений после исчерпания попыток: %s",
+            reset_count,
+        )
+
+    return reset_count
 
 
 def update_notification_result(
@@ -374,6 +580,7 @@ async def process_notification_queue() -> None:
 
     try:
         recover_stale_notifications(session, now_utc)
+        reset_exhausted_notifications(session, now_utc)
 
         if not SEND_NOTIFICATIONS:
             pending_count = session.scalar(
