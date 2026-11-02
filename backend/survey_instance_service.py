@@ -289,7 +289,7 @@ def create_survey_instances_for_date(
 
             closes_at = datetime.combine(
                 survey_date + timedelta(days=1),
-                time(17, 59),
+                time(18, 0),
                 tzinfo=school_timezone,
             )
 
@@ -306,7 +306,7 @@ def create_survey_instances_for_date(
                     )
                     continue
 
-                if now_local > closes_at:
+                if now_local >= closes_at:
                     result["skipped"].append(
                         {
                             "class_id": class_id,
@@ -475,7 +475,10 @@ def create_survey_notifications(
         student_data = session.execute(
             select(Student.id, User.sferum_id)
             .join(User, User.id == Student.user_id)
-            .where(Student.id == student_id)
+            .where(
+                Student.id == student_id,
+                User.is_demo.is_(False),
+            )
         ).first()
 
         if student_data is None:
@@ -539,7 +542,7 @@ def close_expired_survey_instances(
         update(SurveyInstance)
         .where(
             SurveyInstance.status == "open",
-            SurveyInstance.closes_at < now_utc,
+            SurveyInstance.closes_at <= now_utc,
         )
         .values(status="closed")
     )

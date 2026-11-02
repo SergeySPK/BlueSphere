@@ -3,6 +3,7 @@ import pytest
 from survey_instance_service import (
     close_expired_survey_instances,
     create_survey_notifications,
+    create_survey_instances_for_date,
 )
 
 from sqlalchemy import select
@@ -12,11 +13,13 @@ from models import (
     SurveyResponseOption,
     StudentEnrollment,
     Class,
+    SurveyInstance,
     SurveyNotification,
+    SurveyQuestion,
 )
 import survey_service
-from datetime import datetime, timedelta, timezone
-
+from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone, date
 
 def test_get_available_survey(survey_test_data, survey_service_session):
     data = survey_test_data
@@ -449,8 +452,6 @@ def test_survey_unavailable_without_matching_enrollment(
     survey_service_session,
     db_session,
 ):
-    from datetime import timedelta
-
     data = survey_test_data
 
     # Зачисление начинается после даты опроса.
@@ -910,3 +911,254 @@ def test_create_survey_notifications_is_idempotent(
     ).all()
 
     assert len(notifications) == 1
+
+
+def test_create_survey_notifications_ignores_demo_student(
+    survey_test_data,
+    db_session,
+):
+    data = survey_test_data
+
+    data["user"].is_demo = True
+    db_session.flush()
+
+    result = create_survey_notifications(
+        db_session,
+        data["instance"],
+    )
+
+    assert result == {"created": 0, "skipped": 1}
+
+    notification = db_session.scalar(
+        select(SurveyNotification).where(
+            SurveyNotification.instance_id == data["instance"].id,
+            SurveyNotification.student_id == data["student"].id,
+        )
+    )
+
+    assert notification is None
+
+
+
+def test_close_expired_survey_instance_at_exact_deadline(
+    survey_test_data,
+    db_session,
+):
+    """Опрос закрывается ровно в момент closes_at."""
+    instance = survey_test_data["instance"]
+    now = datetime.now(timezone.utc)
+
+    instance.closes_at = now
+    instance.status = "open"
+    db_session.flush()
+
+    result = close_expired_survey_instances(
+        db_session,
+        now=now,
+    )
+
+    db_session.refresh(instance)
+
+    assert result >= 1
+    assert instance.status == "closed"
+
+
+def test_create_survey_instance_skips_before_18(
+    survey_test_data,
+    db_session,
+    monkeypatch,
+):
+    """До 18:00 новый опрос не создаётся."""
+    data = survey_test_data
+    survey_date = date.today() + timedelta(days=2)
+    school_timezone = ZoneInfo("Asia/Yekaterinburg")
+
+    db_session.add(
+        SurveyQuestion(
+            title="Тестовый вопрос",
+            bot_text="Тестовый вопрос",
+            answer_type="single",
+            options_source="static",
+            min_answer=1,
+            max_answer=1,
+            sort_order=1,
+            is_active=True,
+        )
+    )
+    db_session.flush()
+
+    monkeypatch.setattr(
+        "survey_instance_service.get_classes_with_schedule",
+        lambda session, target_date: [
+            (
+                data["class"].id,
+                data["class"].code,
+                data["class"].name,
+                "Asia/Yekaterinburg",
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        "survey_instance_service.prepare_question_options",
+        lambda session, question, class_id, target_date: [],
+    )
+
+    now = datetime.combine(
+        survey_date,
+        datetime.min.time().replace(hour=17, minute=59),
+        tzinfo=school_timezone,
+    )
+
+    result = create_survey_instances_for_date(
+        db_session,
+        survey_date,
+        now=now,
+    )
+
+    assert result["created"] == []
+    assert len(result["skipped"]) == 1
+    assert "Время открытия" in result["skipped"][0]["reason"]
+
+
+def test_create_survey_instance_at_18_and_is_idempotent(
+    survey_test_data,
+    db_session,
+    monkeypatch,
+):
+    """В 18:00 опрос создаётся, повторный запуск не создаёт дубликат."""
+    data = survey_test_data
+    survey_date = date.today() + timedelta(days=3)
+    school_timezone = ZoneInfo("Asia/Yekaterinburg")
+
+    db_session.add(
+        SurveyQuestion(
+            title="Тестовый вопрос",
+            bot_text="Тестовый вопрос",
+            answer_type="single",
+            options_source="static",
+            min_answer=1,
+            max_answer=1,
+            sort_order=1,
+            is_active=True,
+        )
+    )
+    db_session.flush()
+
+    monkeypatch.setattr(
+        "survey_instance_service.get_classes_with_schedule",
+        lambda session, target_date: [
+            (
+                data["class"].id,
+                data["class"].code,
+                data["class"].name,
+                "Asia/Yekaterinburg",
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        "survey_instance_service.prepare_question_options",
+        lambda session, question, class_id, target_date: [],
+    )
+
+    now = datetime.combine(
+        survey_date,
+        datetime.min.time().replace(hour=18),
+        tzinfo=school_timezone,
+    )
+
+    result = create_survey_instances_for_date(
+        db_session,
+        survey_date,
+        now=now,
+    )
+
+    assert len(result["created"]) == 1
+    assert result["skipped"] == []
+    assert result["errors"] == []
+
+    instance = db_session.scalar(
+        select(SurveyInstance).where(
+            SurveyInstance.class_id == data["class"].id,
+            SurveyInstance.survey_date == survey_date,
+        )
+    )
+
+    assert instance is not None
+    assert instance.status == "open"
+    assert instance.opens_at == now
+    assert instance.closes_at == datetime.combine(
+        survey_date + timedelta(days=1),
+        datetime.min.time().replace(hour=18),
+        tzinfo=school_timezone,
+    )
+
+    # Повторный запуск не должен создать второй экземпляр.
+    second_result = create_survey_instances_for_date(
+        db_session,
+        survey_date,
+        now=now,
+    )
+
+    assert second_result["created"] == []
+    assert len(second_result["skipped"]) == 1
+    assert "уже существует" in second_result["skipped"][0]["reason"]
+
+
+def test_create_survey_instance_skips_at_exact_deadline(
+    survey_test_data,
+    db_session,
+    monkeypatch,
+):
+    """В 18:00 следующего дня просроченный опрос не создаётся."""
+    data = survey_test_data
+    survey_date = date.today() + timedelta(days=4)
+    school_timezone = ZoneInfo("Asia/Yekaterinburg")
+
+    db_session.add(
+        SurveyQuestion(
+            title="Тестовый вопрос",
+            bot_text="Тестовый вопрос",
+            answer_type="single",
+            options_source="static",
+            min_answer=1,
+            max_answer=1,
+            sort_order=1,
+            is_active=True,
+        )
+    )
+    db_session.flush()
+
+    monkeypatch.setattr(
+        "survey_instance_service.get_classes_with_schedule",
+        lambda session, target_date: [
+            (
+                data["class"].id,
+                data["class"].code,
+                data["class"].name,
+                "Asia/Yekaterinburg",
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        "survey_instance_service.prepare_question_options",
+        lambda session, question, class_id, target_date: [],
+    )
+
+    deadline = datetime.combine(
+        survey_date + timedelta(days=1),
+        datetime.min.time().replace(hour=18),
+        tzinfo=school_timezone,
+    )
+
+    result = create_survey_instances_for_date(
+        db_session,
+        survey_date,
+        now=deadline,
+    )
+
+    assert result["created"] == []
+    assert len(result["skipped"]) == 1
+    assert "Срок проведения" in result["skipped"][0]["reason"]
