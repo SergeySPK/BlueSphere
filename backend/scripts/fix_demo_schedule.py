@@ -1,8 +1,16 @@
+import sys
+from pathlib import Path
+
+# Добавляем папку backend в пути поиска модулей Python.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND_DIR))
+
 from datetime import date
 
 from sqlalchemy import select
 
-from database import SessionLocal
+from user_mode import validate_database_mode
+from database import engine, SessionLocal
 from models import (
     AcademicYear,
     Class,
@@ -11,7 +19,6 @@ from models import (
     Subject,
     TeachingAssignment,
 )
-
 
 SCHOOL_SHORT_NAME = "Школа № 1"
 ACADEMIC_YEAR_NAME = "2026–2027"
@@ -57,17 +64,12 @@ SCHEDULE_DATE = date(2026, 9, 9)
 
 
 def main():
+    validate_database_mode(engine)
     with SessionLocal() as db:
-        school = db.scalar(
-            select(School).where(
-                School.short_name == SCHOOL_SHORT_NAME
-            )
-        )
+        school = db.scalar(select(School).where(School.short_name == SCHOOL_SHORT_NAME))
 
         if school is None:
-            raise RuntimeError(
-                f"Школа «{SCHOOL_SHORT_NAME}» не найдена."
-            )
+            raise RuntimeError(f"Школа «{SCHOOL_SHORT_NAME}» не найдена.")
 
         academic_year = db.scalar(
             select(AcademicYear).where(
@@ -77,9 +79,7 @@ def main():
         )
 
         if academic_year is None:
-            raise RuntimeError(
-                f"Учебный год «{ACADEMIC_YEAR_NAME}» не найден."
-            )
+            raise RuntimeError(f"Учебный год «{ACADEMIC_YEAR_NAME}» не найден.")
 
         rows = db.execute(
             select(
@@ -126,14 +126,11 @@ def main():
             subject_name = subject.name
 
             if class_code not in LESSON_NUMBERS:
-                raise ValueError(
-                    f"Неизвестный код класса: {class_code}"
-                )
+                raise ValueError(f"Неизвестный код класса: {class_code}")
 
             if subject_name not in LESSON_NUMBERS[class_code]:
                 raise ValueError(
-                    f"Для класса {class_code} не настроен "
-                    f"предмет «{subject_name}»."
+                    f"Для класса {class_code} не настроен " f"предмет «{subject_name}»."
                 )
 
             if subject_name == "Английский язык":
@@ -149,9 +146,7 @@ def main():
 
             lesson_number = LESSON_NUMBERS[class_code][subject_name]
 
-            updates.append(
-                (lesson, lesson_number, room)
-            )
+            updates.append((lesson, lesson_number, room))
 
         # Проверяем, что изменение номеров не нарушит уникальность
         # (assignment_id, date, lesson_number).

@@ -1,10 +1,17 @@
+import sys
+from pathlib import Path
+
+# Добавляем папку backend в пути поиска модулей Python.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND_DIR))
+
 from datetime import date
 
 from sqlalchemy import func, select
 
-from database import SessionLocal
+from user_mode import validate_database_mode
+from database import engine, SessionLocal
 from models import AcademicYear, Class, School
-
 
 GRADES = range(1, 12)
 
@@ -16,16 +23,15 @@ PARALLELS = {
 }
 
 SCHOOL_SHORT_NAME = "Школа № 1"
-ACADEMIC_YEAR_NAME = "2026–2027"
+ACADEMIC_YEAR_NAME = "2026-2027"
 
 
 def seed_database():
+    validate_database_mode(engine)
     with SessionLocal() as session:
         # Находим школу или создаём её.
         school = session.scalar(
-            select(School).where(
-                School.short_name == SCHOOL_SHORT_NAME
-            )
+            select(School).where(School.short_name == SCHOOL_SHORT_NAME)
         )
 
         if school is None:
@@ -108,10 +114,7 @@ def seed_database():
 
         print("Демонстрационные данные подготовлены.")
         print(f"Школа: {school.short_name} (ID: {school.id})")
-        print(
-            f"Учебный год: {academic_year.name} "
-            f"(ID: {academic_year.id})"
-        )
+        print(f"Учебный год: {academic_year.name} " f"(ID: {academic_year.id})")
         print(
             "Статус учебного года: "
             f"{'активный' if academic_year.is_active else 'неактивный'}"

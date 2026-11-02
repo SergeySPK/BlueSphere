@@ -1,11 +1,20 @@
+import sys
+from pathlib import Path
+
+# Добавляем папку backend в пути поиска модулей Python.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND_DIR))
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from user_mode import get_or_create_user, validate_database_mode
 from database import engine
-from models import User, Teacher, School
+from models import Teacher, School
 
 
 def main():
+    validate_database_mode(engine)
     print("=== Добавление учителя BlueSphere ===")
 
     sferum_id = input("MAX user_id учителя: ").strip()
@@ -30,17 +39,16 @@ def main():
                 print(f"Ошибка: школа с ID {school_id} не найдена.")
                 return
 
-            user = db.scalar(
-                select(User).where(User.sferum_id == sferum_id)
+            user, created = get_or_create_user(
+                db,
+                sferum_id,
+                full_name,
             )
 
-            if user is None:
-                user = User(
-                    sferum_id=sferum_id,
-                    full_name=full_name,
-                )
-                db.add(user)
-                db.flush()
+            if created:
+                print(f"Создан пользователь: {full_name}")
+            else:
+                print(f"Пользователь уже существует: {user.full_name} (ID={user.id})")
 
             teacher = db.scalar(
                 select(Teacher).where(
