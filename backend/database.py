@@ -12,9 +12,7 @@ load_dotenv(ENV_FILE)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise RuntimeError(
-        f"Переменная DATABASE_URL не найдена. Проверь файл: {ENV_FILE}"
-    )
+    raise RuntimeError(f"Переменная DATABASE_URL не найдена. Проверь файл: {ENV_FILE}")
 
 # Подключение к PostgreSQL.
 engine = create_engine(
