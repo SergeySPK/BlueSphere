@@ -77,11 +77,11 @@ class LoadCalendar extends StatelessWidget {
                 children: [
                   Text(
                     _getMonthName(date.month).toUpperCase(),
-                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w700, color: loadMax),
+                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 15.fh, fontWeight: .w700, color: loadMax),
                   ),
                   Text(
                     'карта нагрузки',
-                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 11, fontWeight: .w400, color: text),
+                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 11.fh, fontWeight: .w400, color: text),
                   ),
                 ],
               ),
@@ -139,11 +139,11 @@ class LoadCalendar extends StatelessWidget {
     Widget cell = Container(
       decoration: BoxDecoration(
         color: fillColor,
-        borderRadius: BorderRadius.circular(5),
+        borderRadius: BorderRadius.circular(5.r),
         border: isEditing
-            ? Border.all(color: red, width: 3)
+            ? Border.all(color: red, width: 3.fw)
             : isToday
-            ? Border.all(color: currentDayBorder, width: 3)
+            ? Border.all(color: currentDayBorder, width: 3.fw)
             : null,
       ),
       child: Stack(
@@ -151,7 +151,7 @@ class LoadCalendar extends StatelessWidget {
           Center(
             child: Text(
               '${dayData.day}',
-              style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w400, color: textColor),
+              style: TextStyle(fontFamily: 'Inter', fontSize: 12.fh, fontWeight: .w400, color: textColor),
             ),
           ),
           if (isEditing)
@@ -206,14 +206,14 @@ class LoadCalendar extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 8,
-          height: 8,
+          width: 8.fw,
+          height: 8.fh,
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         SizedBox(width: 4.fw),
         Text(
           title,
-          style: TextStyle(fontFamily: 'SF Pro', fontSize: 7, fontWeight: .w400, color: black),
+          style: TextStyle(fontFamily: 'SF Pro', fontSize: 7.fh, fontWeight: .w400, color: black),
         ),
       ],
     );
@@ -222,7 +222,7 @@ class LoadCalendar extends StatelessWidget {
   Widget _buildWeekDay(String day) {
     return Text(
       day,
-      style: TextStyle(fontFamily: 'SF Pro', fontSize: 11, fontWeight: .w400, color: text),
+      style: TextStyle(fontFamily: 'SF Pro', fontSize: 11.fh, fontWeight: .w400, color: text),
     );
   }
 }

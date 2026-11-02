@@ -2,47 +2,58 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
-// Кастомная верхняя панель
+// Кастомная верхняя шапка
 class CustomHeader extends StatelessWidget {
   final String title;
-  final VoidCallback onClose;
-  final VoidCallback onMenu;
+  final bool showBack;
+  final VoidCallback? onBack;
+  final bool showMenu;
+  final VoidCallback? onMenu;
 
-  const CustomHeader({super.key, required this.title, required this.onClose, required this.onMenu});
+  const CustomHeader({super.key, required this.title, this.showBack = false, this.onBack, this.showMenu = false, this.onMenu});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: po(l: 14, r: 14, t: 13, b: 11),
+      padding: ps(h: 14, v: 11),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
+          if (showBack)
+            GestureDetector(
+              onTap: onBack,
+              child: Container(
+                width: 30.fw,
+                height: 30.fh,
+                decoration: BoxDecoration(color: white, shape: BoxShape.circle),
+                child: Center(
+                  child: Icon(Icons.arrow_back_ios_new, color: grey, size: 16.fh),
+                ),
+              ),
+            )
+          else
+            SizedBox(width: 30.fw, height: 30.fh),
           Container(
-            width: 30.fw,
-            height: 30.fh,
-            decoration: BoxDecoration(color: white, shape: BoxShape.circle),
-            child: IconButton(
-              icon: Image.asset('assets/exit.png', width: 12.5.fw, height: 12.5.fh),
-              onPressed: onClose,
-            ),
-          ),
-          Container(
-            padding: ps(h: 18, v: 6),
-            decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12.r)),
+            padding: ps(h: 26, v: 6),
+            decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
             child: Text(
               title,
-              style: TextStyle(fontFamily: 'SF Pro', fontSize: 16, fontWeight: .w600, color: classColor),
+              style: TextStyle(fontFamily: 'SF Pro', fontSize: 15.fh, fontWeight: .w600, color: classColor),
             ),
           ),
-          Container(
-            width: 30.fw,
-            height: 30.fh,
-            decoration: BoxDecoration(color: white, shape: BoxShape.circle),
-            child: IconButton(
-              icon: Image.asset('assets/menu.png', width: 24.fw, height: 24.fh),
-              onPressed: onMenu,
-            ),
-          ),
+
+          if (showMenu)
+            GestureDetector(
+              onTap: onMenu,
+              child: Container(
+                width: 30.fw,
+                height: 30.fh,
+                decoration: BoxDecoration(color: white, shape: BoxShape.circle),
+                child: Center(child: Icon(Icons.more_vert, color: grey, size: 20)),
+              ),
+            )
+          else
+            SizedBox(width: 30.fw, height: 30.fh),
         ],
       ),
     );

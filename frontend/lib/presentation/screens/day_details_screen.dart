@@ -84,13 +84,13 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
               children: [
                 Text(
                   'Изменить тип урока',
-                  style: TextStyle(fontFamily: 'Inter', fontSize: 18, fontWeight: .w600, color: loadMax),
+                  style: TextStyle(fontFamily: 'Inter', fontSize: 18.fh, fontWeight: .w600, color: loadMax),
                 ),
                 SizedBox(height: 16.fh),
                 TextField(
                   controller: controller,
                   autofocus: true,
-                  style: TextStyle(fontFamily: 'SF Pro', fontSize: 14, color: black),
+                  style: TextStyle(fontFamily: 'SF Pro', fontSize: 14.fh, color: black),
                   decoration: InputDecoration(
                     hintText: 'Например: Контрольная работа',
                     hintStyle: TextStyle(color: text),
@@ -157,7 +157,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: loadMax,
-                        padding: ps(h: 20, v: 10),
+                        padding: ps(h: 20.fw, v: 10.fh),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
 
@@ -207,7 +207,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            CustomHeader(title: widget.className, onClose: () => Navigator.pop(context), onMenu: () {}),
+            CustomHeader(title: widget.className, showBack: true, onBack: () => Navigator.pop(context)),
             Expanded(
               child: _isLoading
                   ? Center(child: CircularProgressIndicator())

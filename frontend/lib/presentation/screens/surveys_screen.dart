@@ -90,7 +90,7 @@ class _SurveysScreenState extends State<SurveysScreen> {
       backgroundColor: background,
       body: Column(
         children: [
-          CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс', onClose: () {}, onMenu: () {}),
+          CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс'),
           Expanded(
             child: _errorCode != null
                 ? ErrorScreen(code: _errorCode!)

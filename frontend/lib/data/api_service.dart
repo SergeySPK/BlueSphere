@@ -9,8 +9,16 @@ class ApiService {
   static const String baseUrl = 'https://blue-sphere-bot.bothost.tech';
 
   static String? _token;
-  static List<dynamic>? _schools;
+  static int? _schoolId; // <-- Храним ID школы
   static List<String>? _roles;
+
+  static void setTestToken(String token) {
+    _token = token;
+  }
+
+  static void setTestSchoolId(int id) {
+    _schoolId = id;
+  }
 
   // 1. Авторизация
   static Future<Map<String, dynamic>?> auth(String initData) async {
@@ -20,8 +28,15 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         _token = data['access_token'];
-        _schools = data['schools'];
         _roles = List<String>.from(data['roles'] ?? []);
+
+        // --- СОХРАНЯЕМ ID ШКОЛЫ ---
+        final schools = data['schools'] as List?;
+        if (schools != null && schools.isNotEmpty) {
+          _schoolId = schools[0]['id'];
+          print('Школа ID: $_schoolId');
+        }
+
         return data;
       } else {
         throw Exception(response.statusCode);
@@ -32,10 +47,11 @@ class ApiService {
     }
   }
 
-  // 2. Получение классов
+  // 2. Получение классов (для учителя/админа)
   static Future<Map<String, List<SchoolClass>>> getClasses() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/classes'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
+      // Новый путь с ID школы
+      final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -57,7 +73,8 @@ class ApiService {
   // 3. Календарь (Тепловая карта)
   static Future<List<LoadDay>> getHeatmap(String classId, String month) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/classes/$classId/heatmap?month=$month'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
+      // Новый путь
+      final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/heatmap?month=$month'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
@@ -74,7 +91,8 @@ class ApiService {
   // 4. Статус для баннера
   static Future<ClassStatus> getSummary(String classId, String date) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/classes/$classId/summary?date=$date'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
+      // Новый путь
+      final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/summary?date=$date'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
         return ClassStatus.fromJson(jsonDecode(response.body));
@@ -90,7 +108,8 @@ class ApiService {
   // 5. Рекомендации
   static Future<Recommendation> getRecommendations(String classId) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/classes/$classId/recommendations'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
+      // Новый путь
+      final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/recommendations'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
         return Recommendation.fromJson(jsonDecode(response.body));
@@ -106,7 +125,8 @@ class ApiService {
   // 6. Расписание на день
   static Future<List<dynamic>> getSchedule(String classId, String date) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/classes/$classId/schedule?date=$date'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
+      // Новый путь
+      final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/schedule?date=$date'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);

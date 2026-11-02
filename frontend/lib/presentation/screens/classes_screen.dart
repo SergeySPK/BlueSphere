@@ -70,7 +70,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
       backgroundColor: background,
       body: Column(
         children: [
-          CustomHeader(title: 'Выберите класс', onClose: () {}, onMenu: () {}),
+          CustomHeader(title: 'Выберите класс'),
           Expanded(
             child: _errorCode != null
                 ? ErrorScreen(code: _errorCode!)
@@ -111,10 +111,10 @@ class _ClassesScreenState extends State<ClassesScreen> {
               children: [
                 Text(
                   groupName,
-                  style: TextStyle(fontFamily: 'Inter', fontSize: 18, fontWeight: .w600, color: black),
+                  style: TextStyle(fontFamily: 'Inter', fontSize: 18.fh, fontWeight: .w600, color: black),
                 ),
                 Spacer(),
-                Image.asset(isExpanded ? 'assets/up.png' : 'assets/down.png', width: 24, height: 24),
+                Image.asset(isExpanded ? 'assets/up.png' : 'assets/down.png', width: 24.fw, height: 24.fh),
               ],
             ),
           ),
@@ -145,7 +145,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
         decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(20)),
         child: Text(
           schoolClass.name,
-          style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w400, color: black),
+          style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: .w400, color: black),
         ),
       ),
     );

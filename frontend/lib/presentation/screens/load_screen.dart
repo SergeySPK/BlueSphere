@@ -102,7 +102,7 @@ class _LoadScreenState extends State<LoadScreen> {
       backgroundColor: background,
       body: Column(
         children: [
-          CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс', onClose: () {}, onMenu: () {}),
+          CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс'),
           Expanded(child: _buildBody()),
         ],
       ),
@@ -176,25 +176,25 @@ class _LoadScreenState extends State<LoadScreen> {
         children: [
           Text(
             'Класс не выбран',
-            style: TextStyle(fontFamily: 'Inter', fontSize: 18, fontWeight: FontWeight.w600, color: black),
+            style: TextStyle(fontFamily: 'Inter', fontSize: 18.fh, fontWeight: FontWeight.w600, color: black),
           ),
           SizedBox(height: 8.fh),
           Text(
             'Чтобы посмотреть нагрузку,\nвыберите класс',
             textAlign: TextAlign.center,
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 14, fontWeight: FontWeight.w400, color: text),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 14.fh, fontWeight: FontWeight.w400, color: text),
           ),
           SizedBox(height: 24.fh),
           ElevatedButton(
             onPressed: widget.onGoToClasses,
             style: ElevatedButton.styleFrom(
               backgroundColor: bottomBarText,
-              padding: po(l: 24, r: 24, t: 12, b: 12),
+              padding: ps(h: 24, v: 12),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             child: Text(
               'Перейти к классам',
-              style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: FontWeight.w500, color: white),
+              style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: FontWeight.w500, color: white),
             ),
           ),
         ],
