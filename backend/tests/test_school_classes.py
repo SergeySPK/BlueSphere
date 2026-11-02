@@ -246,9 +246,7 @@ def test_school_heatmap_uses_school_and_class_access(monkeypatch):
         current_user_id,
         db,
     ):
-        heatmap_calls.append(
-            (school_class, month, current_user_id)
-        )
+        heatmap_calls.append((school_class, month, current_user_id))
         return ["тепловая карта"]
 
     monkeypatch.setattr(
@@ -317,9 +315,7 @@ def test_school_summary_uses_school_and_class_access(monkeypatch):
     access_calls = []
     summary_calls = []
 
-    def fake_require_access(
-        school_id, class_code, user, db, allowed_roles=None
-    ):
+    def fake_require_access(school_id, class_code, user, db, allowed_roles=None):
         access_calls.append((school_id, class_code, allowed_roles))
         return school_class
 
@@ -327,12 +323,8 @@ def test_school_summary_uses_school_and_class_access(monkeypatch):
         summary_calls.append(school_class_arg)
         return "сводка"
 
-    monkeypatch.setattr(
-        main, "require_school_class_access", fake_require_access
-    )
-    monkeypatch.setattr(
-        main, "build_class_summary", fake_build_summary
-    )
+    monkeypatch.setattr(main, "require_school_class_access", fake_require_access)
+    monkeypatch.setattr(main, "build_class_summary", fake_build_summary)
 
     result = main.get_school_summary(
         school_id=1,
@@ -342,16 +334,14 @@ def test_school_summary_uses_school_and_class_access(monkeypatch):
     )
 
     assert result == "сводка"
-    assert access_calls == [(1, "1a", {"teacher", "admin"})]
+    assert access_calls == [(1, "1a", None)]
     assert summary_calls == [school_class]
 
 
 def test_school_summary_denies_access_without_building_summary(monkeypatch):
     user = SimpleNamespace(id=1)
 
-    def deny_access(
-        school_id, class_code, user, db, allowed_roles=None
-    ):
+    def deny_access(school_id, class_code, user, db, allowed_roles=None):
         raise HTTPException(
             status_code=403,
             detail="У вашей роли нет доступа к этому разделу",
@@ -360,12 +350,8 @@ def test_school_summary_denies_access_without_building_summary(monkeypatch):
     def unexpected_build_summary(*args, **kwargs):
         pytest.fail("Сводка не должна формироваться без доступа")
 
-    monkeypatch.setattr(
-        main, "require_school_class_access", deny_access
-    )
-    monkeypatch.setattr(
-        main, "build_class_summary", unexpected_build_summary
-    )
+    monkeypatch.setattr(main, "require_school_class_access", deny_access)
+    monkeypatch.setattr(main, "build_class_summary", unexpected_build_summary)
 
     with pytest.raises(HTTPException) as error:
         main.get_school_summary(
@@ -379,23 +365,17 @@ def test_school_summary_denies_access_without_building_summary(monkeypatch):
     assert error.value.detail == "У вашей роли нет доступа к этому разделу"
 
 
-def test_school_summary_passes_only_teacher_and_admin_roles(monkeypatch):
+def test_school_summary_does_not_restrict_roles(monkeypatch):
     user = SimpleNamespace(id=1)
     school_class = SimpleNamespace(id=34, code="1a", school_id=1)
     captured_roles = []
 
-    def fake_require_access(
-        school_id, class_code, user, db, allowed_roles=None
-    ):
+    def fake_require_access(school_id, class_code, user, db, allowed_roles=None):
         captured_roles.append(allowed_roles)
         return school_class
 
-    monkeypatch.setattr(
-        main, "require_school_class_access", fake_require_access
-    )
-    monkeypatch.setattr(
-        main, "build_class_summary", lambda school_class, db: "сводка"
-    )
+    monkeypatch.setattr(main, "require_school_class_access", fake_require_access)
+    monkeypatch.setattr(main, "build_class_summary", lambda school_class, db: "сводка")
 
     main.get_school_summary(
         school_id=1,
@@ -404,7 +384,7 @@ def test_school_summary_passes_only_teacher_and_admin_roles(monkeypatch):
         db=SimpleNamespace(),
     )
 
-    assert captured_roles == [{"teacher", "admin"}]
+    assert captured_roles == [None]
 
 
 def test_school_recommendations_uses_school_and_class_access(monkeypatch):
@@ -414,9 +394,7 @@ def test_school_recommendations_uses_school_and_class_access(monkeypatch):
     access_calls = []
     recommendations_calls = []
 
-    def fake_require_access(
-        school_id, class_code, user, db, allowed_roles=None
-    ):
+    def fake_require_access(school_id, class_code, user, db, allowed_roles=None):
         access_calls.append((school_id, class_code, allowed_roles))
         return school_class
 
@@ -424,12 +402,8 @@ def test_school_recommendations_uses_school_and_class_access(monkeypatch):
         recommendations_calls.append((school_class, month))
         return "рекомендации"
 
-    monkeypatch.setattr(
-        main, "require_school_class_access", fake_require_access
-    )
-    monkeypatch.setattr(
-        main, "build_class_recommendations", fake_build_recommendations
-    )
+    monkeypatch.setattr(main, "require_school_class_access", fake_require_access)
+    monkeypatch.setattr(main, "build_class_recommendations", fake_build_recommendations)
 
     result = main.get_school_recommendations(
         school_id=1,
@@ -447,9 +421,7 @@ def test_school_recommendations_uses_school_and_class_access(monkeypatch):
 def test_school_recommendations_denies_access_without_building(monkeypatch):
     user = SimpleNamespace(id=1)
 
-    def deny_access(
-        school_id, class_code, user, db, allowed_roles=None
-    ):
+    def deny_access(school_id, class_code, user, db, allowed_roles=None):
         raise HTTPException(
             status_code=403,
             detail="У вашей роли нет доступа к этому разделу",
@@ -458,12 +430,8 @@ def test_school_recommendations_denies_access_without_building(monkeypatch):
     def unexpected_build(*args, **kwargs):
         pytest.fail("Рекомендации не должны формироваться без доступа")
 
-    monkeypatch.setattr(
-        main, "require_school_class_access", deny_access
-    )
-    monkeypatch.setattr(
-        main, "build_class_recommendations", unexpected_build
-    )
+    monkeypatch.setattr(main, "require_school_class_access", deny_access)
+    monkeypatch.setattr(main, "build_class_recommendations", unexpected_build)
 
     with pytest.raises(HTTPException) as error:
         main.get_school_recommendations(

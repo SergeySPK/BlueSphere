@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 
+
 @pytest.fixture
 def db_connection():
     """
@@ -27,8 +28,7 @@ def db_connection():
     # Защита от случайного подключения к рабочей базе.
     if url.database != "bluesphere_restore_test":
         pytest.fail(
-            "Интеграционные тесты разрешены только "
-            "для базы bluesphere_restore_test."
+            "Интеграционные тесты разрешены только " "для базы bluesphere_restore_test."
         )
 
     if url.get_backend_name() != "postgresql":
@@ -36,8 +36,7 @@ def db_connection():
 
     if url.query.get("host") != "/var/run/postgresql":
         pytest.fail(
-            "Разрешено подключение только к локальному "
-            "PostgreSQL через Unix-сокет."
+            "Разрешено подключение только к локальному " "PostgreSQL через Unix-сокет."
         )
 
     engine = create_engine(database_url)
@@ -57,8 +56,7 @@ def db_connection():
 def create_test_student(db_connection):
     """Создаёт отдельного ученика со школой, учебным годом и классом."""
 
-    school_id = db_connection.execute(
-        text("""
+    school_id = db_connection.execute(text("""
             INSERT INTO schools (
                 region, city, address, short_name, full_name
             )
@@ -70,8 +68,7 @@ def create_test_student(db_connection):
                 'Тестовая общеобразовательная школа'
             )
             RETURNING id
-        """)
-    ).scalar_one()
+        """)).scalar_one()
 
     academic_year_id = db_connection.execute(
         text("""
@@ -136,8 +133,7 @@ def create_test_student(db_connection):
 def create_test_assignment_context(db_connection):
     """Создаёт школу, учебный год, класс, учителя и предмет."""
 
-    school_id = db_connection.execute(
-        text("""
+    school_id = db_connection.execute(text("""
             INSERT INTO schools (
                 region, city, address, short_name, full_name
             )
@@ -149,8 +145,7 @@ def create_test_assignment_context(db_connection):
                 'Тестовая школа для учебных назначений'
             )
             RETURNING id
-        """)
-    ).scalar_one()
+        """)).scalar_one()
 
     academic_year_id = db_connection.execute(
         text("""
@@ -223,8 +218,7 @@ def create_test_assignment_context(db_connection):
 
 def test_school_cannot_have_two_active_academic_years(db_connection):
     # Создаём отдельную школу для теста.
-    school_id = db_connection.execute(
-        text("""
+    school_id = db_connection.execute(text("""
             INSERT INTO schools (
                 region,
                 city,
@@ -240,8 +234,7 @@ def test_school_cannot_have_two_active_academic_years(db_connection):
                 'Тестовая общеобразовательная школа'
             )
             RETURNING id
-        """)
-    ).scalar_one()
+        """)).scalar_one()
 
     # Добавляем первый активный учебный год.
     db_connection.execute(
