@@ -3,10 +3,10 @@ import 'package:vize/vize.dart';
 import 'colors.dart';
 
 class StatusBanner extends StatelessWidget {
-  final int level; // Уровень нагрузки (0-4)
-  final String date; // Дата опроса
-  final bool showButton; // Показывать ли кнопку "Перейти к сводке"
-  final VoidCallback? onGoToSummary; // Что делать при нажатии на кнопку
+  final int level;
+  final String date;
+  final bool showButton;
+  final VoidCallback? onGoToSummary;
 
   const StatusBanner({super.key, required this.level, required this.date, this.showButton = true, this.onGoToSummary});
 
@@ -65,7 +65,9 @@ class StatusBanner extends StatelessWidget {
               shape: BoxShape.circle,
               border: Border.all(color: cardColor, width: 8),
             ),
-            child: Icon(icon, color: cardColor, size: 50),
+            child: Center(
+              child: Icon(icon, color: cardColor, size: 50.fh),
+            ),
           ),
           SizedBox(width: 12.fw),
           Expanded(
@@ -74,22 +76,22 @@ class StatusBanner extends StatelessWidget {
               children: [
                 Text(
                   'итоги опроса состояния учащихся на $date',
-                  style: TextStyle(fontFamily: 'Inter', fontSize: 8, fontWeight: .w400, color: text),
+                  style: TextStyle(fontFamily: 'Inter', fontSize: 8.fh, fontWeight: .w400, color: text),
                 ),
                 SizedBox(height: 4.fh),
                 Text(
                   title,
-                  style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w600, color: cardColor),
+                  style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: .w600, color: cardColor),
                 ),
                 Text(
                   description,
-                  style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, fontWeight: .w400, color: cardColor),
+                  style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, fontWeight: .w400, color: cardColor),
                 ),
 
                 if (showButton) ...[
                   SizedBox(height: 15.fh),
                   SizedBox(
-                    height: 20.fh,
+                    height: 21.fh,
                     child: ElevatedButton(
                       onPressed: onGoToSummary,
                       style: ElevatedButton.styleFrom(
@@ -98,7 +100,7 @@ class StatusBanner extends StatelessWidget {
                       ),
                       child: Text(
                         'Перейти к сводке',
-                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: white),
+                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, color: white, fontWeight: .w500),
                       ),
                     ),
                   ),

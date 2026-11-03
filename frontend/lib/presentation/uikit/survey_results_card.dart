@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
+// Контейнер с результатами опроса
 class SurveyResultItem {
   final String label;
   final int percentage;
@@ -21,28 +22,28 @@ class SurveyResultsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: pa(14),
-      decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
+      padding: ps(v: 14.fh, h: 14.fw),
+      decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12.r)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'РЕЗУЛЬТАТЫ ОПРОСА $date',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w700, color: grey),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 15.fh, fontWeight: .w700, color: grey),
           ),
-          SizedBox(height: 15.fh),
+          SizedBox(height: 20.fh),
           Text(
             'Общая оценка состояния после учебного дня',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 11, fontWeight: .w500, color: black),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 11.fh, fontWeight: .w500, color: black),
           ),
-          SizedBox(height: 12.fh),
+          SizedBox(height: 13.fh),
           ...generalResults.map((item) => _buildProgressBar(item)),
           SizedBox(height: 7.fh),
           Divider(color: text.withOpacity(0.2), height: 1),
           SizedBox(height: 17.fh),
           Text(
             'Предметы, на которых сегодня ученикам\nбыло больше всего тревожно',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 11, fontWeight: .w500, color: black),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 11.fh, fontWeight: .w500, color: black),
           ),
           SizedBox(height: 12.fh),
           ...stressSubjects.map((item) => _buildProgressBar(item)),
@@ -51,7 +52,7 @@ class SurveyResultsCard extends StatelessWidget {
           SizedBox(height: 17.fh),
           Text(
             'Предметы, на которых сегодня ученикам\nбыло легко',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 11, fontWeight: .w500, color: black),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 11.fh, fontWeight: .w500, color: black),
           ),
           SizedBox(height: 12.fh),
           ...easySubjects.map((item) => _buildProgressBar(item)),
@@ -72,20 +73,20 @@ class SurveyResultsCard extends StatelessWidget {
     final barColor = item.isHighlighted ? loadMax : getBarColor(item.percentage);
 
     return Padding(
-      padding: po(b: 8),
+      padding: po(b: 8.fh),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             item.label,
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: black, fontWeight: .w400),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, color: black, fontWeight: .w400),
           ),
           Row(
             children: [
               Expanded(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(value: item.percentage / 100, minHeight: 9, backgroundColor: results, valueColor: AlwaysStoppedAnimation<Color>(barColor)),
+                  child: LinearProgressIndicator(value: item.percentage / 100, minHeight: 9.fh, backgroundColor: results, valueColor: AlwaysStoppedAnimation<Color>(barColor)),
                 ),
               ),
               SizedBox(width: 10.fw),
@@ -94,7 +95,7 @@ class SurveyResultsCard extends StatelessWidget {
                 child: Text(
                   '${item.percentage}%',
                   textAlign: TextAlign.right,
-                  style: TextStyle(fontFamily: 'Inter', fontSize: 12, color: black),
+                  style: TextStyle(fontFamily: 'Inter', fontSize: 12.fh, color: black),
                 ),
               ),
             ],

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
+// Экран обработок исключений
 class ErrorScreen extends StatelessWidget {
   final int code;
 
@@ -20,11 +21,11 @@ class ErrorScreen extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Icon(_getIcon(code), size: 50, color: black),
+                Icon(_getIcon(code), size: 50.fh, color: black),
                 Text(
                   _getTitle(code),
                   textAlign: TextAlign.start,
-                  style: TextStyle(fontFamily: 'Inter', fontSize: 24, fontWeight: .w600, color: black),
+                  style: TextStyle(fontFamily: 'Inter', fontSize: 24.fh, fontWeight: .w600, color: black),
                 ),
               ],
             ),
@@ -32,13 +33,13 @@ class ErrorScreen extends StatelessWidget {
             Text(
               _getDescription(code),
               textAlign: TextAlign.center,
-              style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, color: grey, fontWeight: .w400),
+              style: TextStyle(fontFamily: 'SF Pro', fontSize: 15.fh, color: grey, fontWeight: .w400),
             ),
 
             SizedBox(height: 14.fh),
             Text(
               'ERROR CODE $code',
-              style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, color: text, fontWeight: .w600),
+              style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, color: text, fontWeight: .w600),
             ),
           ],
         ),

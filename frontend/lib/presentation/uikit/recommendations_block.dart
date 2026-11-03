@@ -12,8 +12,8 @@ class RecommendationsBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: pa(16),
-      decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
+      padding: ps(v: 16.fh, h: 16.fw),
+      decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12.r)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -21,7 +21,7 @@ class RecommendationsBlock extends StatelessWidget {
             children: [
               Text(
                 'РЕКОМЕНДАЦИИ',
-                style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w700, color: classColor),
+                style: TextStyle(fontFamily: 'SF Pro', fontSize: 15.fh, fontWeight: .w700, color: classColor),
               ),
               SizedBox(width: 4.fw),
               Image.asset('assets/star.png', width: 13.fw, height: 13.fh, color: classColor),
@@ -29,7 +29,7 @@ class RecommendationsBlock extends StatelessWidget {
           ),
           Text(
             'уменьшите нагрузку с',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, fontWeight: .w400, color: text),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, fontWeight: .w400, color: text),
           ),
           SizedBox(height: 4.fh),
           Wrap(
@@ -42,7 +42,7 @@ class RecommendationsBlock extends StatelessWidget {
           SizedBox(height: 8.fh),
           Text(
             'между менее загруженными днями',
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 10, fontWeight: .w400, color: text),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, fontWeight: .w400, color: text),
           ),
           SizedBox(height: 4.fh),
           Row(
@@ -60,7 +60,7 @@ class RecommendationsBlock extends StatelessWidget {
                 child: Text(
                   'составлено с помощью\nИИ-ассистента',
                   textAlign: TextAlign.right,
-                  style: TextStyle(fontFamily: 'SF Pro', fontSize: 8, fontWeight: .w400, color: text),
+                  style: TextStyle(fontFamily: 'SF Pro', fontSize: 8.fh, fontWeight: .w400, color: text),
                 ),
               ),
             ],
@@ -75,10 +75,10 @@ class RecommendationsBlock extends StatelessWidget {
       width: 30.fw,
       height: 30.fh,
       alignment: Alignment.center,
-      decoration: BoxDecoration(color: backgroundColor, borderRadius: BorderRadius.circular(5)),
+      decoration: BoxDecoration(color: backgroundColor, borderRadius: BorderRadius.circular(5.r)),
       child: Text(
         '$day',
-        style: TextStyle(fontFamily: 'Inter', fontSize: 10, fontWeight: .w400, color: textColor),
+        style: TextStyle(fontFamily: 'Inter', fontSize: 10.fh, fontWeight: .w400, color: textColor),
       ),
     );
   }
@@ -98,11 +98,11 @@ class AiRecommendationsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (recommendations.isEmpty) return const SizedBox.shrink();
+    if (recommendations.isEmpty) return SizedBox.shrink();
 
     return Container(
-      padding: pa(16),
-      decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
+      padding: ps(v: 16.fh, h: 16.fw),
+      decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12.r)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -110,26 +110,26 @@ class AiRecommendationsCard extends StatelessWidget {
             children: [
               Text(
                 'РЕКОМЕНДАЦИИ',
-                style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w700, color: black),
+                style: TextStyle(fontFamily: 'SF Pro', fontSize: 15.fh, fontWeight: .w700, color: black),
               ),
               SizedBox(width: 4.fw),
-              Image.asset('assets/star.png', width: 14, height: 14, color: black),
+              Image.asset('assets/star.png', width: 14.fw, height: 14.fh, color: black),
             ],
           ),
           SizedBox(height: 16.fh),
           ...recommendations.map((rec) {
             return Padding(
-              padding: po(b: 16),
+              padding: po(b: 16.fh),
               child: RichText(
                 text: TextSpan(
                   children: [
                     TextSpan(
                       text: '${rec.title}\n',
-                      style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w600, color: black),
+                      style: TextStyle(fontFamily: 'Inter', fontSize: 12.fh, fontWeight: .w600, color: black),
                     ),
                     TextSpan(
                       text: rec.description,
-                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 12, fontWeight: .w400, color: text),
+                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 12.fh, fontWeight: .w400, color: text),
                     ),
                   ],
                 ),

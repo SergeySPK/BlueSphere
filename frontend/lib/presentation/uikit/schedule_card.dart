@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
+// Кастомный блок с расписанием
 class LessonData {
   final int number;
   final String subject;
@@ -34,13 +35,13 @@ class ScheduleCard extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(5)),
+                width: 40.fw,
+                height: 40.fh,
+                decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(5.r)),
                 child: Center(
                   child: Text(
                     day,
-                    style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w400, color: white),
+                    style: TextStyle(fontFamily: 'Inter', fontSize: 12.fh, fontWeight: .w400, color: white),
                   ),
                 ),
               ),
@@ -50,11 +51,11 @@ class ScheduleCard extends StatelessWidget {
                 children: [
                   Text(
                     month.toUpperCase(),
-                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 24, fontWeight: .w700, color: statusColor),
+                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 24.fh, fontWeight: .w700, color: statusColor),
                   ),
                   Text(
                     weekday,
-                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 15, fontWeight: .w400, color: text),
+                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 15.fh, fontWeight: .w400, color: text),
                   ),
                 ],
               ),
@@ -63,11 +64,11 @@ class ScheduleCard extends StatelessWidget {
           SizedBox(height: 16.fh),
           if (lessons.isEmpty)
             Padding(
-              padding: po(t: 16, b: 16),
+              padding: ps(v: 16.fh),
               child: Center(
                 child: Text(
                   'Нет уроков на этот день',
-                  style: TextStyle(fontFamily: 'SF Pro', fontSize: 14, color: text),
+                  style: TextStyle(fontFamily: 'SF Pro', fontSize: 14.fh, color: text),
                 ),
               ),
             )
@@ -76,7 +77,7 @@ class ScheduleCard extends StatelessWidget {
               final isEditing = lesson.number == editingLessonNumber;
               final hColor = editingColor;
               return Padding(
-                padding: po(b: 16),
+                padding: po(b: 16.fh),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -84,21 +85,21 @@ class ScheduleCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Padding(
-                          padding: po(t: 4),
+                          padding: po(t: 4.fh),
                           child: Text(
                             '${lesson.number}. ',
-                            style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w500, color: Color(0xff7D7D7D)),
+                            style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: .w500, color: Color(0xff7D7D7D)),
                           ),
                         ),
                         Expanded(
                           child: Container(
-                            padding: po(t: 4, b: 4, l: 8, r: 8),
+                            padding: ps(v: 4.fh, h: 8.fw),
                             decoration: BoxDecoration(
                               color: isEditing ? hColor.withOpacity(0.6) : Colors.transparent,
                               border: isEditing
                                   ? Border(
-                                      left: BorderSide(color: hColor, width: 2),
-                                      right: BorderSide(color: hColor, width: 2),
+                                      left: BorderSide(color: hColor, width: 2.fw),
+                                      right: BorderSide(color: hColor, width: 2.fw),
                                     )
                                   : null,
                             ),
@@ -107,11 +108,11 @@ class ScheduleCard extends StatelessWidget {
                                 children: [
                                   TextSpan(
                                     text: '${lesson.subject}. ',
-                                    style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: .w400, color: black),
+                                    style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: .w400, color: black),
                                   ),
                                   TextSpan(
                                     text: lesson.type,
-                                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 14, fontWeight: .w400, color: black),
+                                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 14.fh, fontWeight: .w400, color: black),
                                   ),
                                 ],
                               ),
@@ -119,17 +120,18 @@ class ScheduleCard extends StatelessWidget {
                           ),
                         ),
                         SizedBox(width: 12.fw),
-                        GestureDetector(
-                          onTap: () {
-                            if (onEditLesson != null) onEditLesson!(lesson);
-                          },
-                          child: Container(
-                            width: 26,
-                            height: 26,
-                            decoration: BoxDecoration(color: loadMax, borderRadius: BorderRadius.circular(4)),
-                            child: Icon(Icons.edit_outlined, color: Colors.white, size: 18),
+                        if (onEditLesson != null)
+                          GestureDetector(
+                            onTap: () {
+                              if (onEditLesson != null) onEditLesson!(lesson);
+                            },
+                            child: Container(
+                              width: 26.fw,
+                              height: 26.fh,
+                              decoration: BoxDecoration(color: loadMax, borderRadius: BorderRadius.circular(4.r)),
+                              child: Icon(Icons.edit_outlined, color: Colors.white, size: 18.fh),
+                            ),
                           ),
-                        ),
                       ],
                     ),
 
@@ -138,26 +140,25 @@ class ScheduleCard extends StatelessWidget {
                         children: [
                           Spacer(),
                           Padding(
-                            padding: ps(h: 30),
+                            padding: ps(h: 30.fw),
                             child: Container(
                               decoration: BoxDecoration(color: hColor),
                               child: Text(
                                 lesson.teacherName,
-                                style: TextStyle(fontFamily: 'SF Pro', fontSize: 8, fontWeight: .w400, color: white),
+                                style: TextStyle(fontFamily: 'SF Pro', fontSize: 8.fh, fontWeight: .w400, color: white),
                               ),
                             ),
                           ),
                         ],
                       ),
                     Padding(
-                      padding: po(t: 8),
+                      padding: po(t: 8.fh),
                       child: Divider(color: text.withOpacity(0.3), height: 1),
                     ),
                   ],
                 ),
               );
             }),
-          SizedBox(height: 15.fh),
         ],
       ),
     );

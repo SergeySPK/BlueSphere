@@ -3,6 +3,7 @@ import 'package:vize/vize.dart';
 import '../../domain/load_day.dart';
 import 'colors.dart';
 
+// Кастомный календарь
 class LoadCalendar extends StatelessWidget {
   final DateTime date;
   final List<LoadDay> loadDays;
@@ -64,7 +65,7 @@ class LoadCalendar extends StatelessWidget {
     }
 
     return Container(
-      padding: pa(16),
+      padding: ps(v: 16.fh, h: 16.fw),
       decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -161,7 +162,7 @@ class LoadCalendar extends StatelessWidget {
               child: Container(
                 padding: pa(2),
                 decoration: BoxDecoration(color: red, shape: BoxShape.circle),
-                child: const Icon(Icons.refresh, color: Colors.white, size: 10),
+                child: Icon(Icons.refresh, color: Colors.white, size: 10.fw),
               ),
             ),
         ],
@@ -188,13 +189,13 @@ class LoadCalendar extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           color: emptyCell,
-          borderRadius: BorderRadius.circular(5),
-          border: isToday ? Border.all(color: currentDayBorder, width: 3) : null,
+          borderRadius: BorderRadius.circular(5.r),
+          border: isToday ? Border.all(color: currentDayBorder, width: 3.fw) : null,
         ),
         child: Center(
           child: Text(
             '$day',
-            style: TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: .w400, color: text),
+            style: TextStyle(fontFamily: 'Inter', fontSize: 12.fh, fontWeight: .w400, color: text),
           ),
         ),
       ),

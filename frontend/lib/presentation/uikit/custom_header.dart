@@ -15,7 +15,7 @@ class CustomHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: ps(h: 14, v: 11),
+      padding: ps(h: 14.fw, v: 11.fh),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -34,7 +34,7 @@ class CustomHeader extends StatelessWidget {
           else
             SizedBox(width: 30.fw, height: 30.fh),
           Container(
-            padding: ps(h: 26, v: 6),
+            padding: ps(h: 26.fw, v: 6.fh),
             decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
             child: Text(
               title,
@@ -49,7 +49,9 @@ class CustomHeader extends StatelessWidget {
                 width: 30.fw,
                 height: 30.fh,
                 decoration: BoxDecoration(color: white, shape: BoxShape.circle),
-                child: Center(child: Icon(Icons.more_vert, color: grey, size: 20)),
+                child: Center(
+                  child: Icon(Icons.more_vert, color: grey, size: 20.fw),
+                ),
               ),
             )
           else

@@ -9,18 +9,44 @@ class ApiService {
   static const String baseUrl = 'https://blue-sphere-bot.bothost.tech';
 
   static String? _token;
-  static int? _schoolId; // <-- Храним ID школы
+  static int? _schoolId;
   static List<String>? _roles;
 
   static void setTestToken(String token) {
     _token = token;
   }
 
+  // Демо-авторизация (для локальных тестов)
+  static Future<Map<String, dynamic>?> demoAuth(String sferumId) async {
+    try {
+      final response = await http.post(Uri.parse('$baseUrl/api/demo_auth'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'sferum_id': sferumId}));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        _token = data['access_token']; // Сохраняем токен
+        _schoolId = data['schools'];
+
+        // Сохраняем ID школы
+        final schools = data['schools'] as List?;
+        if (schools != null && schools.isNotEmpty) {
+          _schoolId = schools[0]['id'];
+        }
+
+        return data;
+      } else {
+        throw Exception(response.statusCode);
+      }
+    } catch (e) {
+      print('Ошибка demoAuth: $e');
+      rethrow;
+    }
+  }
+
   static void setTestSchoolId(int id) {
     _schoolId = id;
   }
 
-  // 1. Авторизация
+  // Авторизация
   static Future<Map<String, dynamic>?> auth(String initData) async {
     try {
       final response = await http.post(Uri.parse('$baseUrl/api/auth'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'init_data': initData}));
@@ -29,8 +55,6 @@ class ApiService {
         final data = jsonDecode(response.body);
         _token = data['access_token'];
         _roles = List<String>.from(data['roles'] ?? []);
-
-        // --- СОХРАНЯЕМ ID ШКОЛЫ ---
         final schools = data['schools'] as List?;
         if (schools != null && schools.isNotEmpty) {
           _schoolId = schools[0]['id'];
@@ -47,7 +71,7 @@ class ApiService {
     }
   }
 
-  // 2. Получение классов (для учителя/админа)
+  // Получение классов (для учителя/админа)
   static Future<Map<String, List<SchoolClass>>> getClasses() async {
     try {
       // Новый путь с ID школы
@@ -70,7 +94,7 @@ class ApiService {
     }
   }
 
-  // 3. Календарь (Тепловая карта)
+  // Календарь (Тепловая карта)
   static Future<List<LoadDay>> getHeatmap(String classId, String month) async {
     try {
       // Новый путь
@@ -88,7 +112,7 @@ class ApiService {
     }
   }
 
-  // 4. Статус для баннера
+  // Статус для баннера
   static Future<ClassStatus> getSummary(String classId, String date) async {
     try {
       // Новый путь
@@ -105,7 +129,7 @@ class ApiService {
     }
   }
 
-  // 5. Рекомендации
+  // Рекомендации
   static Future<Recommendation> getRecommendations(String classId) async {
     try {
       // Новый путь
@@ -122,7 +146,7 @@ class ApiService {
     }
   }
 
-  // 6. Расписание на день
+  // Расписание на день
   static Future<List<dynamic>> getSchedule(String classId, String date) async {
     try {
       // Новый путь
@@ -139,7 +163,7 @@ class ApiService {
     }
   }
 
-  // 7. Обновление типа урока
+  // Обновление типа урока
   static Future<bool> updateLesson(String lessonId, String newType) async {
     try {
       final response = await http.put(Uri.parse('$baseUrl/api/schedule/$lessonId'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'}, body: jsonEncode({'lesson_type': newType}));
@@ -155,7 +179,7 @@ class ApiService {
     }
   }
 
-  // 8. Начать редактирование
+  // Начать редактирование
   static Future<void> startEditing(String lessonId) async {
     try {
       final response = await http.post(Uri.parse('$baseUrl/api/schedule/$lessonId/editing'), headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
@@ -166,7 +190,7 @@ class ApiService {
     }
   }
 
-  // 9. Продлить редактирование
+  // Продлить редактирование
   static Future<void> renewEditing(String lessonId) async {
     try {
       final response = await http.put(Uri.parse('$baseUrl/api/schedule/$lessonId/editing'), headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
@@ -177,7 +201,7 @@ class ApiService {
     }
   }
 
-  // 10. Закончить редактирование
+  // Закончить редактирование
   static Future<void> stopEditing(String lessonId) async {
     try {
       final response = await http.delete(Uri.parse('$baseUrl/api/schedule/$lessonId/editing'), headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
