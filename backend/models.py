@@ -50,9 +50,7 @@ class AcademicYear(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE")
-    )
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(50))
     start_date: Mapped[PythonDate] = mapped_column(Date)
     end_date: Mapped[PythonDate] = mapped_column(Date)
@@ -85,9 +83,7 @@ class Class(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE")
-    )
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"))
 
     academic_year_id: Mapped[int] = mapped_column(Integer)
 
@@ -106,9 +102,7 @@ class Subject(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE")
-    )
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(150))
 
 
@@ -116,9 +110,7 @@ class AcademicPeriod(Base):
     __tablename__ = "academic_periods"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE")
-    )
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(100))
     start_date: Mapped[PythonDate] = mapped_column(Date)
     end_date: Mapped[PythonDate] = mapped_column(Date)
@@ -128,10 +120,14 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sferum_id: Mapped[str] = mapped_column(
-        String(100), unique=True, index=True
-    )
+    sferum_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255))
+    is_demo: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
 
 
 class Teacher(Base):
@@ -146,12 +142,8 @@ class Teacher(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
-    school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"))
 
 
 class Student(Base):
@@ -162,9 +154,7 @@ class Student(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         unique=True,
     )
-    class_id: Mapped[int] = mapped_column(
-        ForeignKey("classes.id", ondelete="CASCADE")
-    )
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"))
 
 
 class StudentEnrollment(Base):
@@ -189,9 +179,7 @@ class StudentEnrollment(Base):
         ForeignKey("students.id", ondelete="CASCADE")
     )
 
-    class_id: Mapped[int] = mapped_column(
-        ForeignKey("classes.id", ondelete="CASCADE")
-    )
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"))
 
     start_date: Mapped[PythonDate] = mapped_column(Date)
     end_date: Mapped[PythonDate | None] = mapped_column(Date, nullable=True)
@@ -204,17 +192,11 @@ class StudentEnrollment(Base):
 
 class Administrator(Base):
     __tablename__ = "administrators"
-    __table_args__ = (
-        UniqueConstraint("user_id", "school_id"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "school_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
-    school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"))
     position: Mapped[str] = mapped_column(String(100))
 
 
@@ -255,9 +237,7 @@ class TeachingAssignment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    school_id: Mapped[int] = mapped_column(
-        ForeignKey("schools.id", ondelete="CASCADE")
-    )
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"))
 
     teacher_id: Mapped[int] = mapped_column(Integer)
 
@@ -300,9 +280,7 @@ class EditingSession(Base):
     """Активная сессия редактирования урока."""
 
     __tablename__ = "editing_sessions"
-    __table_args__ = (
-        UniqueConstraint("schedule_id"),
-    )
+    __table_args__ = (UniqueConstraint("schedule_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -336,9 +314,7 @@ class Survey(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    class_id: Mapped[int] = mapped_column(
-        ForeignKey("classes.id", ondelete="CASCADE")
-    )
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"))
     student_id: Mapped[int] = mapped_column(
         ForeignKey("students.id", ondelete="CASCADE")
     )
@@ -357,9 +333,7 @@ class SurveyDraft(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    class_id: Mapped[int] = mapped_column(
-        ForeignKey("classes.id", ondelete="CASCADE")
-    )
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"))
     student_id: Mapped[int] = mapped_column(
         ForeignKey("students.id", ondelete="CASCADE")
     )
@@ -369,32 +343,357 @@ class SurveyDraft(Base):
 
 class SurveySubject(Base):
     __tablename__ = "survey_subjects"
+    __table_args__ = (UniqueConstraint("survey_id", "subject_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    survey_id: Mapped[int] = mapped_column(ForeignKey("surveys.id", ondelete="CASCADE"))
+    subject_name: Mapped[str] = mapped_column(String(150))
+
+
+class SurveyQuestion(Base):
+    __tablename__ = "survey_questions"
     __table_args__ = (
-        UniqueConstraint("survey_id", "subject_name"),
+        CheckConstraint(
+            "answer_type IN ('single', 'multiple')",
+            name="ck_survey_questions_answer_type",
+        ),
+        CheckConstraint(
+            "options_source IN ('static', 'subjects')",
+            name="ck_survey_questions_options_source",
+        ),
+        CheckConstraint(
+            "min_answer >= 1 AND max_answer >= min_answer",
+            name="ck_survey_questions_answer_limits",
+        ),
+        CheckConstraint(
+            "(answer_type = 'single' AND min_answer = 1 AND max_answer = 1) "
+            "OR answer_type = 'multiple'",
+            name="ck_survey_questions_single_limits",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    survey_id: Mapped[int] = mapped_column(
-        ForeignKey("surveys.id", ondelete="CASCADE")
+    title: Mapped[str] = mapped_column(String(255))
+    bot_text: Mapped[str] = mapped_column(Text)
+    answer_type: Mapped[str] = mapped_column(String(20))
+    options_source: Mapped[str] = mapped_column(
+        String(30),
+        default="static",
     )
-    subject_name: Mapped[str] = mapped_column(String(150))
+    min_answer: Mapped[int] = mapped_column(Integer, default=1)
+    max_answer: Mapped[int] = mapped_column(Integer, default=1)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class SurveyQuestionOption(Base):
+    __tablename__ = "survey_question_options"
+    __table_args__ = (
+        UniqueConstraint(
+            "question_id",
+            "sort_order",
+            name="uq_survey_question_options_order",
+        ),
+        UniqueConstraint(
+            "question_id",
+            "title",
+            name="uq_survey_question_options_title",
+        ),
+        CheckConstraint(
+            "length(trim(title)) > 0",
+            name="ck_survey_question_options_title_not_empty",
+        ),
+        Index(
+            "uq_survey_question_options_one_exclusive",
+            "question_id",
+            unique=True,
+            postgresql_where=text("is_exclusive IS TRUE"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey("survey_questions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(150))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_exclusive: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class SurveyInstance(Base):
+    __tablename__ = "survey_instances"
+    __table_args__ = (
+        UniqueConstraint(
+            "class_id",
+            "survey_date",
+            name="uq_survey_instances_class_date",
+        ),
+        CheckConstraint(
+            "closes_at > opens_at",
+            name="ck_survey_instances_dates",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'closed', 'cancelled')",
+            name="ck_survey_instances_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    class_id: Mapped[int] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE"),
+        index=True,
+    )
+    survey_date: Mapped[PythonDate] = mapped_column(Date)
+    opens_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    closes_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+
+class SurveyNotification(Base):
+    __tablename__ = "survey_notifications"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "instance_id",
+            "student_id",
+            name="uq_survey_notifications_instance_student",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'sending', 'sent', 'failed')",
+            name="ck_survey_notifications_status",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_survey_notifications_attempt_count",
+        ),
+        Index(
+            "ix_survey_notifications_status",
+            "status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    instance_id: Mapped[int] = mapped_column(
+        ForeignKey("survey_instances.id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="pending",
+    )
+
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+    )
+
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    error: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+
+class SurveyInstanceQuestion(Base):
+    __tablename__ = "survey_instance_questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "instance_id",
+            "sort_order",
+            name="uq_survey_instance_questions_order",
+        ),
+        CheckConstraint(
+            "answer_type IN ('single', 'multiple')",
+            name="ck_survey_instance_questions_answer_type",
+        ),
+        CheckConstraint(
+            "min_answer >= 1 AND max_answer >= min_answer",
+            name="ck_survey_instance_questions_answer_limits",
+        ),
+        CheckConstraint(
+            "(answer_type = 'single' AND min_answer = 1 AND max_answer = 1) "
+            "OR answer_type = 'multiple'",
+            name="ck_survey_instance_questions_single_limits",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instance_id: Mapped[int] = mapped_column(
+        ForeignKey("survey_instances.id", ondelete="CASCADE"),
+        index=True,
+    )
+    source_question_id: Mapped[int | None] = mapped_column(
+        ForeignKey("survey_questions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    title: Mapped[str] = mapped_column(String(255))
+    bot_text: Mapped[str] = mapped_column(Text)
+    answer_type: Mapped[str] = mapped_column(String(20))
+    min_answer: Mapped[int] = mapped_column(Integer)
+    max_answer: Mapped[int] = mapped_column(Integer)
+    sort_order: Mapped[int] = mapped_column(Integer)
+
+
+class SurveyInstanceOption(Base):
+    __tablename__ = "survey_instance_options"
+    __table_args__ = (
+        UniqueConstraint(
+            "instance_question_id",
+            "sort_order",
+            name="uq_survey_instance_options_order",
+        ),
+        UniqueConstraint(
+            "id",
+            "instance_question_id",
+            name="uq_survey_instance_options_id_question",
+        ),
+        UniqueConstraint(
+            "instance_question_id",
+            "title",
+            name="uq_survey_instance_options_title",
+        ),
+        CheckConstraint(
+            "length(trim(title)) > 0",
+            name="ck_survey_instance_options_title_not_empty",
+        ),
+        Index(
+            "uq_survey_instance_options_one_exclusive",
+            "instance_question_id",
+            unique=True,
+            postgresql_where=text("is_exclusive IS TRUE"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instance_question_id: Mapped[int] = mapped_column(
+        ForeignKey("survey_instance_questions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    source_option_id: Mapped[int | None] = mapped_column(
+        ForeignKey("survey_question_options.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    title: Mapped[str] = mapped_column(String(150))
+    sort_order: Mapped[int] = mapped_column(Integer)
+    is_exclusive: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class SurveyResponse(Base):
+    __tablename__ = "survey_responses"
+    __table_args__ = (
+        UniqueConstraint(
+            "instance_question_id",
+            "student_id",
+            name="uq_survey_responses_question_student",
+        ),
+        UniqueConstraint(
+            "id",
+            "instance_question_id",
+            name="uq_survey_responses_id_question",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'submitted')",
+            name="ck_survey_responses_status",
+        ),
+        CheckConstraint(
+            "(status = 'draft' AND submitted_at IS NULL) "
+            "OR (status = 'submitted' AND submitted_at IS NOT NULL)",
+            name="ck_survey_responses_submission_time",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instance_question_id: Mapped[int] = mapped_column(
+        ForeignKey("survey_instance_questions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE"),
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class SurveyResponseOption(Base):
+    __tablename__ = "survey_response_options"
+    __table_args__ = (
+        UniqueConstraint(
+            "response_id",
+            "option_id",
+            name="uq_survey_response_options_selection",
+        ),
+        ForeignKeyConstraint(
+            ["response_id", "instance_question_id"],
+            [
+                "survey_responses.id",
+                "survey_responses.instance_question_id",
+            ],
+            name="fk_response_options_response_question",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["option_id", "instance_question_id"],
+            [
+                "survey_instance_options.id",
+                "survey_instance_options.instance_question_id",
+            ],
+            name="fk_response_options_option_question",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    response_id: Mapped[int] = mapped_column(Integer, index=True)
+
+    option_id: Mapped[int] = mapped_column(Integer, index=True)
+
+    instance_question_id: Mapped[int] = mapped_column(Integer, index=True)
 
 
 class Recommendation(Base):
     __tablename__ = "recommendations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    class_id: Mapped[int] = mapped_column(
-        ForeignKey("classes.id", ondelete="CASCADE")
-    )
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"))
     date_generated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
     recommendation_text: Mapped[str] = mapped_column(Text)
-    days_to_reduce: Mapped[list[int]] = mapped_column(
-        ARRAY(Integer), default=list
-    )
-    days_to_move_to: Mapped[list[int]] = mapped_column(
-        ARRAY(Integer), default=list
-    )
+    days_to_reduce: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list)
+    days_to_move_to: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list)

@@ -233,9 +233,7 @@ def test_old_class_access_query_filters_by_school_and_code(monkeypatch):
 
     result = main.require_class_access("1a", user, fake_db)
 
-    compiled_query = captured["query"].compile(
-        dialect=postgresql.dialect()
-    )
+    compiled_query = captured["query"].compile(dialect=postgresql.dialect())
 
     assert result.id == 34
     assert "classes.school_id" in str(compiled_query)

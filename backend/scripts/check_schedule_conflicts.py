@@ -1,6 +1,14 @@
+import sys
+from pathlib import Path
+
+# Добавляем папку backend в пути поиска модулей Python.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND_DIR))
+
 from sqlalchemy import select
 
-from database import SessionLocal
+from user_mode import validate_database_mode
+from database import engine, SessionLocal
 from models import (
     AcademicYear,
     Class,
@@ -14,6 +22,7 @@ from models import (
 
 
 def check_schedule_conflicts():
+    validate_database_mode(engine)
     with SessionLocal() as session:
         rows = session.execute(
             select(
@@ -84,27 +93,29 @@ def check_schedule_conflicts():
                 teacher_name,
             ) = row
 
-            lessons.append({
-                "id": schedule.id,
-                "date": schedule.date,
-                "number": schedule.lesson_number,
-                "school_id": school_id,
-                "school_name": school_name,
-                "academic_year": academic_year_name,
-                "class_id": class_id,
-                "class_code": class_code,
-                "class_name": class_name,
-                "subgroup": assignment.subgroup,
-                "subject": subject_name,
-                "teacher_user_id": user_id,
-                "teacher_name": teacher_name,
-                "room": schedule.room,
-            })
+            lessons.append(
+                {
+                    "id": schedule.id,
+                    "date": schedule.date,
+                    "number": schedule.lesson_number,
+                    "school_id": school_id,
+                    "school_name": school_name,
+                    "academic_year": academic_year_name,
+                    "class_id": class_id,
+                    "class_code": class_code,
+                    "class_name": class_name,
+                    "subgroup": assignment.subgroup,
+                    "subject": subject_name,
+                    "teacher_user_id": user_id,
+                    "teacher_name": teacher_name,
+                    "room": schedule.room,
+                }
+            )
 
         conflicts = []
 
         for i, first in enumerate(lessons):
-            for second in lessons[i + 1:]:
+            for second in lessons[i + 1 :]:
 
                 # Сравниваем только уроки в одно время.
                 if (
@@ -115,10 +126,7 @@ def check_schedule_conflicts():
 
                 # Один пользователь не может вести два урока одновременно,
                 # даже если он зарегистрирован учителем в разных школах.
-                if (
-                    first["teacher_user_id"]
-                    == second["teacher_user_id"]
-                ):
+                if first["teacher_user_id"] == second["teacher_user_id"]:
                     conflicts.append(
                         (
                             "УЧИТЕЛЬ",
@@ -171,8 +179,8 @@ def check_schedule_conflicts():
                                 (
                                     f'{first["class_name"]} '
                                     f'({first["class_code"]}): '
-                                    f'пересекаются подгруппы '
-                                    f'{first_group} и {second_group}'
+                                    f"пересекаются подгруппы "
+                                    f"{first_group} и {second_group}"
                                 ),
                             )
                         )
@@ -191,28 +199,13 @@ def check_schedule_conflicts():
                     f'  Урок ID {lesson["id"]}: '
                     f'{lesson["date"]}, урок №{lesson["number"]}'
                 )
-                print(
-                    f'    Школа: {lesson["school_name"]}'
-                )
-                print(
-                    f'    Учебный год: {lesson["academic_year"]}'
-                )
-                print(
-                    f'    Класс: {lesson["class_name"]} '
-                    f'({lesson["class_code"]})'
-                )
-                print(
-                    f'    Предмет: {lesson["subject"]}'
-                )
-                print(
-                    f'    Учитель: {lesson["teacher_name"]}'
-                )
-                print(
-                    f'    Кабинет: {lesson["room"]}'
-                )
-                print(
-                    f'    Подгруппа: {lesson["subgroup"]}'
-                )
+                print(f'    Школа: {lesson["school_name"]}')
+                print(f'    Учебный год: {lesson["academic_year"]}')
+                print(f'    Класс: {lesson["class_name"]} ' f'({lesson["class_code"]})')
+                print(f'    Предмет: {lesson["subject"]}')
+                print(f'    Учитель: {lesson["teacher_name"]}')
+                print(f'    Кабинет: {lesson["room"]}')
+                print(f'    Подгруппа: {lesson["subgroup"]}')
 
             print()
 

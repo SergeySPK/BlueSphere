@@ -1,0 +1,46 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.api
+    container_name: bluesphere-api
+    env_file:
+      - backend/.env.demo
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:?Запускайте через docker_compose.py}
+    ports:
+      - "3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.scheduler
+    container_name: bluesphere-scheduler
+    env_file:
+      - backend/.env.demo
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:?Запускайте через docker_compose.py}
+      SEND_NOTIFICATIONS: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    profiles:
+      - scheduler
+
+  bot:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.bot
+    container_name: bluesphere-bot
+    env_file:
+      - backend/.env.demo
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:?Запускайте через docker_compose.py}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    profiles:
+      - bot

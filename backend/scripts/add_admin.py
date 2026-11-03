@@ -1,15 +1,24 @@
+import sys
+from pathlib import Path
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+# Добавляем папку backend в пути поиска модулей Python.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND_DIR))
+
+from user_mode import get_or_create_user, validate_database_mode
 from database import engine
-from models import User, Administrator, School
+from models import Administrator, School
 
 
 def main():
+    validate_database_mode(engine)
     print("=== Добавление администратора BlueSphere ===")
 
-    sferum_id = input("MAX user_id разработчика: ").strip()
-    full_name = input("Имя разработчика: ").strip()
+    sferum_id = input("MAX user_id администратора: ").strip()
+    full_name = input("ФИО администатора: ").strip()
     school_id_input = input("ID школы (например, 1): ").strip()
 
     if not sferum_id or not full_name or not school_id_input:
@@ -21,7 +30,6 @@ def main():
     except ValueError:
         print("Ошибка: ID школы должен быть целым числом.")
         return
-
     with Session(engine) as db:
         try:
             school = db.get(School, school_id)
@@ -30,22 +38,17 @@ def main():
                 print(f"Ошибка: школа с ID {school_id} не найдена.")
                 return
 
-            user = db.scalar(
-                select(User).where(User.sferum_id == sferum_id)
+            user, created = get_or_create_user(
+                db,
+                sferum_id,
+                full_name,
             )
 
-            if user is None:
-                user = User(
-                    sferum_id=sferum_id,
-                    full_name=full_name,
-                )
-                db.add(user)
-                db.flush()
+            if created:
                 print(f"Создан пользователь: {full_name}")
             else:
                 print(
-                    f"Пользователь уже существует: "
-                    f"{user.full_name} (ID={user.id})"
+                    f"Пользователь уже существует: " f"{user.full_name} (ID={user.id})"
                 )
 
             administrator = db.scalar(

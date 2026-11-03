@@ -1,8 +1,16 @@
+import sys
+from pathlib import Path
+
+# Добавляем папку backend в пути поиска модулей Python.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND_DIR))
+
 from datetime import date
 
 from sqlalchemy import select
 
-from database import SessionLocal
+from user_mode import get_or_create_user, get_user_by_sferum_id, validate_database_mode
+from database import engine, SessionLocal
 from models import (
     AcademicYear,
     Class,
@@ -11,9 +19,7 @@ from models import (
     Subject,
     Teacher,
     TeachingAssignment,
-    User,
 )
-
 
 SCHOOL_SHORT_NAME = "Школа № 1"
 ACADEMIC_YEAR_NAME = "2026–2027"
@@ -23,17 +29,11 @@ LESSON_NUMBER = 5
 
 
 def get_or_create_teacher(session, school, sferum_id, full_name):
-    user = session.scalar(
-        select(User).where(User.sferum_id == sferum_id)
+    user, _ = get_or_create_user(
+        session,
+        sferum_id,
+        full_name,
     )
-
-    if user is None:
-        user = User(
-            sferum_id=sferum_id,
-            full_name=full_name,
-        )
-        session.add(user)
-        session.flush()
 
     teacher = session.scalar(
         select(Teacher).where(
@@ -41,14 +41,6 @@ def get_or_create_teacher(session, school, sferum_id, full_name):
             Teacher.school_id == school.id,
         )
     )
-
-    if teacher is None:
-        teacher = Teacher(
-            user_id=user.id,
-            school_id=school.id,
-        )
-        session.add(teacher)
-        session.flush()
 
     return teacher
 
@@ -114,17 +106,15 @@ def get_or_create_lesson(session, assignment, room, lesson_type):
 
 
 def update_demo_schedule():
+    validate_database_mode(engine)
     with SessionLocal() as session:
         school = session.scalar(
-            select(School).where(
-                School.short_name == SCHOOL_SHORT_NAME
-            )
+            select(School).where(School.short_name == SCHOOL_SHORT_NAME)
         )
 
         if school is None:
             raise RuntimeError(
-                f"Не найдена школа «{SCHOOL_SHORT_NAME}». "
-                "Сначала запусти seed.py."
+                f"Не найдена школа «{SCHOOL_SHORT_NAME}». " "Сначала запусти seed.py."
             )
 
         academic_year = session.scalar(
@@ -135,9 +125,7 @@ def update_demo_schedule():
         )
 
         if academic_year is None:
-            raise RuntimeError(
-                f"Не найден учебный год {ACADEMIC_YEAR_NAME}."
-            )
+            raise RuntimeError(f"Не найден учебный год {ACADEMIC_YEAR_NAME}.")
 
         subject = session.scalar(
             select(Subject).where(
@@ -147,9 +135,7 @@ def update_demo_schedule():
         )
 
         if subject is None:
-            raise RuntimeError(
-                "Не найден предмет «Английский язык»."
-            )
+            raise RuntimeError("Не найден предмет «Английский язык».")
 
         classes = session.scalars(
             select(Class).where(
@@ -159,26 +145,19 @@ def update_demo_schedule():
             )
         ).all()
 
-        classes_by_code = {
-            school_class.code: school_class
-            for school_class in classes
-        }
+        classes_by_code = {school_class.code: school_class for school_class in classes}
 
-        missing_classes = {
-            "5a", "5b", "5v"
-        } - classes_by_code.keys()
+        missing_classes = {"5a", "5b", "5v"} - classes_by_code.keys()
 
         if missing_classes:
             raise RuntimeError(
-                "Не найдены классы: "
-                + ", ".join(sorted(missing_classes))
+                "Не найдены классы: " + ", ".join(sorted(missing_classes))
             )
 
         # Первый преподаватель — Смирнова Анна Андреевна.
-        first_teacher_user = session.scalar(
-            select(User).where(
-                User.sferum_id == "demo-teacher-5"
-            )
+        first_teacher_user = get_user_by_sferum_id(
+            session,
+            "demo-teacher-5",
         )
 
         if first_teacher_user is None:
@@ -195,9 +174,7 @@ def update_demo_schedule():
         )
 
         if first_teacher is None:
-            raise RuntimeError(
-                "Не найден профиль учителя Смирновой А.А."
-            )
+            raise RuntimeError("Не найден профиль учителя Смирновой А.А.")
 
         second_teacher = get_or_create_teacher(
             session,
