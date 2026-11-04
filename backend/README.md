@@ -405,14 +405,14 @@ SEND_NOTIFICATIONS=true
 | `POST` | `/api/demo_auth` | Демонстрационная авторизация |
 | `GET` | `/api/schools` | Доступные школы пользователя |
 | `GET` | `/api/schools/{school_id}/classes` | Классы школы |
-| `GET` | `/api/schools/{school_id}/classes/{class_id}/heatmap` | Дневная нагрузка класса |
-| `GET` | `/api/schools/{school_id}/classes/{class_id}/summary` | Сводная нагрузка класса |
-| `GET` | `/api/schools/{school_id}/classes/{class_id}/recommendations` | Рекомендации по нагрузке |
-| `GET` | `/api/schools/{school_id}/classes/{class_id}/schedule` | Расписание класса |
-| `PUT` | `/api/schools/{school_id}/classes/{class_id}/schedule/{lesson_id}` | Редактирование занятия |
-| `POST` | `/api/schools/{school_id}/classes/{class_id}/schedule/{lesson_id}/editing` | Начало сессии редактирования |
-| `PUT` | `/api/schools/{school_id}/classes/{class_id}/schedule/{lesson_id}/editing` | Продление сессии редактирования |
-| `DELETE` | `/api/schools/{school_id}/classes/{class_id}/schedule/{lesson_id}/editing` | Завершение сессии редактирования |
+| `GET` | `/api/schools/{school_id}/classes/{class_code}/heatmap` | Дневная нагрузка класса |
+| `GET` | `/api/schools/{school_id}/classes/{class_code}/summary` | Сводная нагрузка класса |
+| `GET` | `/api/schools/{school_id}/classes/{class_code}/recommendations` | Рекомендации по нагрузке |
+| `GET` | `/api/schools/{school_id}/classes/{class_code}/schedule` | Расписание класса |
+| `PUT` | `/api/schools/{school_id}/classes/{class_code}/schedule/{lesson_id}` | Редактирование занятия |
+| `POST` | `/api/schools/{school_id}/classes/{class_code}/schedule/{lesson_id}/editing` | Начало сессии редактирования |
+| `PUT` | `/api/schools/{school_id}/classes/{class_code}/schedule/{lesson_id}/editing` | Продление сессии редактирования |
+| `DELETE` | `/api/schools/{school_id}/classes/{class_code}/schedule/{lesson_id}/editing` | Завершение сессии редактирования |
 | `GET` | `/api/schools/{school_id}/survey-classes` | Классы, доступные для просмотра статистики опросов |
 | `GET` | `/api/schools/{school_id}/classes/{class_code}/surveys` | Список дат опросов класса |
 | `GET` | `/api/schools/{school_id}/classes/{class_code}/surveys/{survey_date}` | Статистика опроса |
