@@ -9,6 +9,7 @@ import '../uikit/status_banner.dart';
 import '../uikit/class_summary_card.dart';
 import '../uikit/survey_results_card.dart';
 
+// Экран опросов
 class SurveysScreen extends StatefulWidget {
   final String classId;
   final String className;
@@ -99,15 +100,13 @@ class _SurveysScreenState extends State<SurveysScreen> {
                 : _isLoading
                 ? Center(child: CircularProgressIndicator())
                 : SingleChildScrollView(
-                    padding: po(t: 8, l: 16, r: 16),
+                    padding: po(t: 8.fh, l: 16.fw, r: 16.fw),
                     child: Column(
                       children: [
                         if (_status != null) StatusBanner(level: _status!.level ?? 4, date: _status!.date ?? '', showButton: false),
-                        SizedBox(height: 16.fh),
-
+                        SizedBox(height: 11.fh),
                         ClassSummaryCard(date: _status?.date ?? '', percentage: 70, statusText: 'НЕУДОВЛЕТВОРИТЕЛЬНО', hardestSubject: 'Математика', easiestSubject: 'Физ. культура'),
-                        SizedBox(height: 16.fh),
-
+                        SizedBox(height: 11.fh),
                         SurveyResultsCard(
                           date: _status?.date ?? '09.09',
                           generalResults: [
@@ -141,7 +140,6 @@ class _SurveysScreenState extends State<SurveysScreen> {
     );
   }
 
-  // заглушка
   Widget _buildNoClassSelected() {
     return Center(
       child: Column(
@@ -149,25 +147,25 @@ class _SurveysScreenState extends State<SurveysScreen> {
         children: [
           Text(
             'Класс не выбран',
-            style: TextStyle(fontFamily: 'Inter', fontSize: 18, fontWeight: FontWeight.w600, color: black),
+            style: TextStyle(fontFamily: 'Inter', fontSize: 18.fh, fontWeight: .w600, color: black),
           ),
           SizedBox(height: 8.fh),
           Text(
             'Чтобы посмотреть опросы,\nвыберите класс',
             textAlign: TextAlign.center,
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 14, fontWeight: FontWeight.w400, color: text),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 14.fh, fontWeight: .w400, color: text),
           ),
           SizedBox(height: 24.fh),
           ElevatedButton(
             onPressed: widget.onGoToClasses,
             style: ElevatedButton.styleFrom(
               backgroundColor: bottomBarText,
-              padding: po(l: 24, r: 24, t: 12, b: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: ps(h: 24.fw, v: 12.fh),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
             ),
             child: Text(
               'Перейти к классам',
-              style: TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: FontWeight.w500, color: white),
+              style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: .w500, color: white),
             ),
           ),
         ],

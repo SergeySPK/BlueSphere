@@ -12,13 +12,15 @@ import '../uikit/recommendations_block.dart';
 import '../uikit/status_banner.dart';
 import 'day_details_screen.dart';
 
+// Экран нагрузки
 class LoadScreen extends StatefulWidget {
   final String classId;
   final String className;
+  final bool isTeacher;
   final VoidCallback onGoToClasses;
   final VoidCallback onGoToSummary;
 
-  const LoadScreen({super.key, required this.classId, required this.className, required this.onGoToClasses, required this.onGoToSummary});
+  const LoadScreen({super.key, required this.classId, required this.className, required this.onGoToClasses, required this.onGoToSummary, required this.isTeacher});
 
   @override
   State<LoadScreen> createState() => _LoadScreenState();
@@ -65,21 +67,13 @@ class _LoadScreenState extends State<LoadScreen> {
       _errorCode = null;
     });
 
+    final now = DateTime.now();
+    final month = now.month.toString().padLeft(2, '0');
+    final date = "${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}";
+
     try {
-      final now = DateTime.now();
-      final month = now.month.toString().padLeft(2, '0');
-      final date = "${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}";
-
-      final results = await Future.wait([ApiService.getHeatmap(widget.classId, month), ApiService.getSummary(widget.classId, date), ApiService.getRecommendations(widget.classId)]);
-
-      if (mounted) {
-        setState(() {
-          _loadDays = (results[0] as List<LoadDay>?) ?? [];
-          _status = results[1] as ClassStatus?;
-          _recommendation = results[2] as Recommendation?;
-          _isLoading = false;
-        });
-      }
+      final heatmap = await ApiService.getHeatmap(widget.classId, month);
+      if (mounted) setState(() => _loadDays = heatmap);
     } catch (e) {
       int code = 500;
       final errorString = e.toString();
@@ -93,6 +87,27 @@ class _LoadScreenState extends State<LoadScreen> {
           _isLoading = false;
         });
       }
+      return;
+    }
+
+    try {
+      final status = await ApiService.getSummary(widget.classId, date);
+      if (mounted) setState(() => _status = status);
+    } catch (e) {
+      print('Баннер недоступен: $e');
+    }
+
+    if (widget.isTeacher) {
+      try {
+        final recommendations = await ApiService.getRecommendations(widget.classId);
+        if (mounted) setState(() => _recommendation = recommendations);
+      } catch (e) {
+        print('Рекомендации недоступны (403), скрываем их');
+      }
+    }
+
+    if (mounted) {
+      setState(() => _isLoading = false);
     }
   }
 
@@ -109,7 +124,6 @@ class _LoadScreenState extends State<LoadScreen> {
     );
   }
 
-  // Этот метод отвечает за то, что показывать на экране
   Widget _buildBody() {
     if (_errorCode != null) {
       return ErrorScreen(code: _errorCode!);
@@ -118,11 +132,11 @@ class _LoadScreenState extends State<LoadScreen> {
       return _buildNoClassSelected();
     }
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(child: CircularProgressIndicator());
     }
 
     return SingleChildScrollView(
-      padding: po(t: 8, l: 16, r: 16),
+      padding: po(t: 8.fh, l: 16.fw, r: 16.fw),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -132,8 +146,7 @@ class _LoadScreenState extends State<LoadScreen> {
             )
           else
             StatusBanner(level: _status!.level ?? 4, date: _status!.date ?? '', showButton: true, onGoToSummary: widget.onGoToSummary),
-          SizedBox(height: 16.fh),
-
+          SizedBox(height: 11.fh),
           LoadCalendar(
             date: DateTime.now(),
             loadDays: _loadDays ?? [],
@@ -143,13 +156,13 @@ class _LoadScreenState extends State<LoadScreen> {
               final currentMonth = months[now.month - 1];
               final currentMonthNumber = now.month.toString();
               final dayData = _loadDays!.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: 4, isEditing: false));
-
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => DayDetailsScreen(
                     day: day,
                     monthName: currentMonth,
+                    isTeacher: widget.isTeacher,
                     monthNumber: currentMonthNumber,
                     className: widget.className,
                     classId: widget.classId,
@@ -161,9 +174,8 @@ class _LoadScreenState extends State<LoadScreen> {
               );
             },
           ),
-          SizedBox(height: 16.fh),
-
-          if (_recommendation != null) RecommendationsBlock(daysToReduce: _recommendation!.daysToReduce, daysToMoveTo: _recommendation!.daysToMoveTo),
+          SizedBox(height: 11.fh),
+          if (widget.isTeacher && _recommendation != null) RecommendationsBlock(daysToReduce: _recommendation!.daysToReduce, daysToMoveTo: _recommendation!.daysToMoveTo),
         ],
       ),
     );
@@ -176,25 +188,25 @@ class _LoadScreenState extends State<LoadScreen> {
         children: [
           Text(
             'Класс не выбран',
-            style: TextStyle(fontFamily: 'Inter', fontSize: 18.fh, fontWeight: FontWeight.w600, color: black),
+            style: TextStyle(fontFamily: 'Inter', fontSize: 18.fh, fontWeight: .w600, color: black),
           ),
           SizedBox(height: 8.fh),
           Text(
             'Чтобы посмотреть нагрузку,\nвыберите класс',
             textAlign: TextAlign.center,
-            style: TextStyle(fontFamily: 'SF Pro', fontSize: 14.fh, fontWeight: FontWeight.w400, color: text),
+            style: TextStyle(fontFamily: 'SF Pro', fontSize: 14.fh, fontWeight: .w400, color: text),
           ),
           SizedBox(height: 24.fh),
           ElevatedButton(
             onPressed: widget.onGoToClasses,
             style: ElevatedButton.styleFrom(
               backgroundColor: bottomBarText,
-              padding: ps(h: 24, v: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: ps(h: 24.fw, v: 12.fh),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
             ),
             child: Text(
               'Перейти к классам',
-              style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: FontWeight.w500, color: white),
+              style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: .w500, color: white),
             ),
           ),
         ],

@@ -23,7 +23,7 @@ class BottomNavBar extends StatelessWidget {
 
     return Container(
       color: background,
-      padding: po(b: 15),
+      padding: po(b: 15.fh),
       child: Theme(
         data: Theme.of(context).copyWith(splashColor: Colors.transparent, highlightColor: Colors.transparent, hoverColor: Colors.transparent),
         child: BottomNavigationBar(
@@ -32,8 +32,8 @@ class BottomNavBar extends StatelessWidget {
           backgroundColor: Colors.transparent,
           type: BottomNavigationBarType.fixed,
           elevation: 0,
-          selectedFontSize: 12.fh,
-          unselectedFontSize: 12.fh,
+          selectedFontSize: 10.fh,
+          unselectedFontSize: 10.fh,
           selectedItemColor: bottomBarText,
           unselectedItemColor: text,
           selectedLabelStyle: TextStyle(fontFamily: 'SF Pro', fontWeight: .w500, letterSpacing: 0.12),

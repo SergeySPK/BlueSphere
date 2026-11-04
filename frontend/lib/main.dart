@@ -2,55 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:blue_sphere/presentation/screens/classes_screen.dart';
 import 'package:blue_sphere/presentation/screens/load_screen.dart';
 import 'package:blue_sphere/presentation/screens/surveys_screen.dart';
+import 'package:blue_sphere/presentation/screens/splash_screen.dart';
 import 'package:blue_sphere/presentation/uikit/bottom_nav_bar.dart';
 import 'package:blue_sphere/presentation/uikit/colors.dart';
 import 'package:vize/vize.dart';
-import 'package:flutter_max_miniapp/flutter_max_miniapp.dart';
 import 'package:blue_sphere/data/api_service.dart';
+import 'package:flutter_max_miniapp/flutter_max_miniapp.dart';
 
+// Точка входа в приложение
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  List<String> userRoles = [];
-  List<String> userClassIds = [];
-
-  try {
-    final webApp = MaxWebApp();
-    webApp.init();
-
-    try {
-      await webApp.enableVerticalSwipes();
-    } catch (e) {
-      print('Свайпы не поддерживаются: $e');
-    }
-
-    final initData = webApp.initData;
-
-    if (initData != null && initData.isNotEmpty) {
-      // В MAX
-      final authData = await ApiService.auth(initData);
-      if (authData != null) {
-        userRoles = List<String>.from(authData['roles'] ?? []);
-        userClassIds = List<String>.from(authData['class_ids'] ?? []);
-      }
-    } else {
-      print('ЛОКАЛЬНЫЙ ВХОД');
-      userRoles = ['admin'];
-      userClassIds = [];
-
-
-      ApiService.setTestToken('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMyIsImlhdCI6MTc5MzYwOTMzMiwiZXhwIjoxNzkzNjEyOTMyLCJpc3MiOiJibHVlLXNwaGVyZS1hcGkifQ.vrsMdci53K_f6g3cZ8a51uH9_dfJwQyRh_fA8wkh3dg');
-    }
-    ApiService.setTestSchoolId(1);
-
-
-  } catch (e) {
-    print('Ошибка инициализации: $e');
-  }
-
-  runApp(MyApp(roles: userRoles, classIds: userClassIds));
+  runApp(const MyApp());
 }
-
 
 // Функция для перевода ID класса в красивое название
 String getRussianClassName(String classId) {
@@ -95,10 +58,7 @@ String getRussianClassName(String classId) {
 }
 
 class MyApp extends StatelessWidget {
-  final List<String> roles;
-  final List<String> classIds;
-
-  const MyApp({super.key, required this.roles, required this.classIds});
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -110,8 +70,71 @@ class MyApp extends StatelessWidget {
         Vize.init(context, figmaWidth: 375, figmaHeight: 812);
         return child!;
       },
-      home: MainScreen(roles: roles, classIds: classIds),
+      home: const AuthWrapper(),
     );
+  }
+}
+
+class AuthWrapper extends StatefulWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  State<AuthWrapper> createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> {
+  bool _isLoading = true;
+  List<String> _roles = [];
+  List<String> _classIds = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    try {
+      // Инициализируем MAX
+      final webApp = MaxWebApp();
+      webApp.init();
+      try {
+        await webApp.enableVerticalSwipes();
+      } catch (e) {
+        debugPrint('Свайпы недоступны: $e');
+      }
+      // Получаем данные для авторизации
+      final initData = webApp.initData;
+
+      if (initData != null && initData.isNotEmpty) {
+        // Отправляем данные на наш бэкенд для получения токена и ролей
+        final authData = await ApiService.auth(initData);
+
+        if (authData != null) {
+          _roles = List<String>.from(authData['roles'] ?? []);
+          _classIds = List<String>.from(authData['class_ids'] ?? []);
+        }
+      } else {
+        debugPrint('initData пуст. Возможно, приложение открыто вне MAX.');
+      }
+    } catch (e) {
+      debugPrint('Ошибка инициализации MAX: $e');
+    }
+
+    // Скрываем сплэш (неважно, успешно прошла авторизация или нет)
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const SplashScreen();
+    }
+    return MainScreen(roles: _roles, classIds: _classIds);
   }
 }
 
@@ -129,6 +152,7 @@ class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
   String _selectedClassId = 'Выберите класс';
   String _selectedClassName = 'Выберите класс';
+  final GlobalKey<NavigatorState> _loadNavigatorKey = GlobalKey<NavigatorState>();
 
   bool get isTeacher => widget.roles.contains('teacher') || widget.roles.contains('admin');
 
@@ -161,8 +185,10 @@ class _MainScreenState extends State<MainScreen> {
 
     screens.add(
       Navigator(
+        key: _loadNavigatorKey,
         onGenerateRoute: (settings) => MaterialPageRoute(
-          builder: (context) => LoadScreen(classId: _selectedClassId, className: _selectedClassName, onGoToClasses: () => setState(() => _currentIndex = 0), onGoToSummary: () => setState(() => _currentIndex = isTeacher ? 2 : 1)),
+          builder: (context) =>
+              LoadScreen(classId: _selectedClassId, className: _selectedClassName, isTeacher: isTeacher, onGoToClasses: () => setState(() => _currentIndex = 0), onGoToSummary: () => setState(() => _currentIndex = isTeacher ? 2 : 1)),
         ),
       ),
     );
@@ -176,6 +202,9 @@ class _MainScreenState extends State<MainScreen> {
         currentIndex: _currentIndex,
         isTeacher: isTeacher,
         onTap: (index) {
+          if (index == (isTeacher ? 1 : 0)) {
+            _loadNavigatorKey.currentState?.popUntil((route) => route.isFirst);
+          }
           setState(() {
             _currentIndex = index;
           });

@@ -10,7 +10,6 @@ class Recommendation {
   }
 }
 
-// для текстовых советов ИИ на экране деталей дня
 class AiTextRecommendation {
   final String title;
   final String description;

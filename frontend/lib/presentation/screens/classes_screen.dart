@@ -6,6 +6,7 @@ import '../uikit/colors.dart';
 import '../uikit/custom_header.dart';
 import '../uikit/error_screen.dart';
 
+// Экран классов
 class ClassesScreen extends StatefulWidget {
   final Function(String id, String name) onClassSelected;
 
@@ -79,7 +80,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                 : _classes == null
                 ? Center(child: Text('Ошибка загрузки'))
                 : ListView.builder(
-                    padding: po(l: 16, r: 16),
+                    padding: po(l: 16.fw, r: 16.fw),
                     itemCount: _sortedGroupNames.length,
                     itemBuilder: (context, index) {
                       final groupName = _sortedGroupNames[index];
@@ -106,7 +107,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
             });
           },
           child: Padding(
-            padding: po(t: 16, b: 12),
+            padding: po(t: 16.fh, b: 12.fh),
             child: Row(
               children: [
                 Text(
@@ -121,7 +122,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
         ),
         if (isExpanded)
           Padding(
-            padding: po(t: 4, b: 16),
+            padding: po(t: 4.fh, b: 16.fh),
             child: Wrap(
               spacing: 8.fw,
               runSpacing: 8.fh,
@@ -141,7 +142,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
         widget.onClassSelected(schoolClass.id, schoolClass.name);
       },
       child: Container(
-        padding: po(l: 16, r: 16, t: 8, b: 8),
+        padding: po(l: 16.fw, r: 16.fw, t: 8.fh, b: 8.fh),
         decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(20)),
         child: Text(
           schoolClass.name,
