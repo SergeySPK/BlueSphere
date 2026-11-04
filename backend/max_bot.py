@@ -2,7 +2,6 @@ from pathlib import Path
 import asyncio
 import logging
 import os
-from time import perf_counter
 from dotenv import load_dotenv
 from maxapi import Bot, Dispatcher
 from maxapi.types import CommandStart, MessageCreated, MessageCallback
@@ -24,9 +23,11 @@ from models import (
 from survey_service import (
     get_available_survey,
     get_next_question,
-    save_single_answer,
-    toggle_multiple_answer,
-    submit_multiple_answer,
+    get_survey_progress,
+    start_survey_progress,
+    save_survey_question_message_id,
+    complete_survey_progress,
+    process_survey_callback,
 )
 
 # Загрузка переменных окружения из backend/.env
@@ -233,13 +234,7 @@ async def start_handler(event: MessageCreated):
         )
         return
 
-    start_time = perf_counter()
-
     profile = get_user_profile(sender.user_id)
-    logger.info(
-        "[PERF] get_user_profile: %.3f сек.",
-        perf_counter() - start_time,
-    )
 
     if profile is None:
         await event.message.answer(
@@ -262,32 +257,77 @@ async def start_handler(event: MessageCreated):
     if "student" in roles:
         name = profile["full_name"] or sender.first_name
 
-        step_time = perf_counter()
-
         survey = get_available_survey(sender.user_id)
-        logger.info(
-            "[PERF] get_available_survey: %.3f сек.",
-            perf_counter() - step_time,
-        )
 
         if survey is None:
             await event.message.answer(
-                f"Привет, {name}!\n" "Сейчас для тебя нет доступных опросов."
+                f"Привет, {name}!\n"
+                "Сейчас для тебя нет доступных опросов."
             )
             return
 
-        step_time = perf_counter()
+        instance_id = survey["instance_id"]
+
+        # Проверяем, не проходил ли ученик этот опрос ранее.
+        progress = get_survey_progress(
+            sender.user_id,
+            instance_id,
+        )
+
+        if progress == "completed":
+            # Не отправляем повторное сообщение:
+            # сообщение об успешном завершении должно остаться неизменным.
+            return
+
+        if progress == "closed":
+            await event.message.answer(
+                "Время прохождения этого опроса завершилось."
+            )
+            return
+
+        if progress == "in_progress":
+            # Ученик уже начал опрос.
+            # Повторный /start не должен создавать дубликат вопроса.
+            return
+
+        # Начинаем прохождение только при первом запуске.
+        progress = start_survey_progress(
+            sender.user_id,
+            instance_id,
+        )
+
+        if progress is None:
+            logger.error(
+                "Не удалось начать опрос: отсутствует запись уведомления. "
+                "MAX user_id: %s, instance_id: %s",
+                sender.user_id,
+                instance_id,
+            )
+
+            await event.message.answer(
+                "Не удалось начать опрос. Попробуйте позже."
+            )
+            return
+
+        if progress == "completed":
+            return
+
+        if progress == "closed":
+            await event.message.answer(
+                "Время прохождения этого опроса завершилось."
+            )
+            return
 
         question = get_next_question(
             sender.user_id,
-            survey["instance_id"],
-        )
-        logger.info(
-            "[PERF] get_next_question: %.3f сек.",
-            perf_counter() - step_time,
+            instance_id,
         )
 
         if question is None:
+            complete_survey_progress(
+                sender.user_id,
+                instance_id,
+            )
             await event.message.answer(
                 f"Привет, {name}!\n"
                 "Ты уже ответил на все вопросы этого опроса. Спасибо!"
@@ -314,22 +354,57 @@ async def start_handler(event: MessageCreated):
                     [
                         CallbackButton(
                             text=option["title"],
-                            payload=f"survey:{question['question_id']}:{option['id']}",
+                            payload=(
+                                f"survey:{question['question_id']}:"
+                                f"{option['id']}"
+                            ),
                         )
                     ]
                     for option in options
                 ]
             ).pack()
 
-        await event.message.answer(
-            f"Привет, {name}!\n\n" f"{question['bot_text']}",
+        # Отправляем первый вопрос.
+        sent_message = await event.message.answer(
+            f"Привет, {name}!\n\n{question['bot_text']}",
             attachments=[keyboard],
         )
+
+        # Сохраняем ID сообщения, чтобы впоследствии
+        # планировщик мог отредактировать его при закрытии опроса.
+        try:
+            message_id = sent_message.message.body.mid
+
+            saved = save_survey_question_message_id(
+                sender.user_id,
+                instance_id,
+                str(message_id),
+            )
+
+            if not saved:
+                logger.error(
+                    "Не удалось сохранить ID сообщения с вопросом. "
+                    "MAX user_id: %s, instance_id: %s",
+                    sender.user_id,
+                    instance_id,
+                )
+
+        except (AttributeError, TypeError):
+            logger.exception(
+                "Не удалось получить ID отправленного сообщения MAX. "
+                "MAX user_id: %s, instance_id: %s",
+                sender.user_id,
+                instance_id,
+            )
+
         return
 
     # Администратор
     if "admin" in roles:
-        await event.message.answer("Здравствуйте! Вы администратор Blue Sphere.")
+        await event.message.answer(
+            "Здравствуйте! Вы администратор Blue Sphere.\n"
+            "Управление нагрузкой и классами доступно в приложении Blue Sphere."
+        )
         return
 
     # Пользователь без назначенной роли
@@ -371,90 +446,84 @@ async def callback_handler(event: MessageCallback):
         )
         return
 
-    # Проверяем доступность опроса.
-    survey = get_available_survey(max_user_id)
+    # Обрабатываем callback в одной сессии и одной транзакции БД.
+    result = process_survey_callback(
+        max_user_id,
+        action,
+        question_id,
+        option_id,
+    )
 
-    if survey is None:
+    status = result["status"]
+
+    # Опрос уже закрыт или недоступен.
+    if status == "closed":
         await send_callback_message(
             event,
-            "Сейчас опрос недоступен или его время уже закончилось.",
+            "Время прохождения этого опроса завершилось.",
         )
         return
 
-    instance_id = survey["instance_id"]
-
-    # Обрабатываем одиночный ответ.
-    if action == "survey":
-        result = save_single_answer(
-            max_user_id=max_user_id,
-            instance_id=instance_id,
-            question_id=question_id,
-            option_id=option_id,
+    # Ученик уже отправил ответ на этот вопрос.
+    if status == "already_submitted":
+        await send_callback_message(
+            event,
+            "Ты уже ответил на этот вопрос.",
         )
+        return
 
-        if result == "already_submitted":
-            await send_callback_message(
-                event,
-                "Ты уже ответил на этот вопрос.",
-            )
-            return
-
-        if result != "submitted":
-            await send_callback_message(
-                event,
-                "Не удалось сохранить ответ. Возможно, опрос уже закрыт.",
-            )
-            return
-
-        message = "Ответ сохранён!"
-
-    # Обрабатываем выбор или снятие варианта.
-    elif action == "survey_toggle":
-        result = toggle_multiple_answer(
-            max_user_id=max_user_id,
-            instance_id=instance_id,
-            question_id=question_id,
-            option_id=option_id,
+    # Достигнут лимит вариантов.
+    if status == "limit_reached":
+        await event.ack(
+            notification="Можно выбрать не более двух вариантов."
         )
+        return
 
-        if result == "already_submitted":
-            await send_callback_message(
-                event,
-                "Ты уже ответил на этот вопрос.",
+    # Ученик ещё не выбрал необходимое количество вариантов.
+    if status == "incomplete":
+        await send_callback_message(
+            event,
+            "Сначала выбери хотя бы один вариант.",
+        )
+        return
+
+    # Вопрос больше не является текущим.
+    if status == "question_unavailable":
+        await send_callback_message(
+            event,
+            "Этот вопрос уже недоступен.",
+        )
+        return
+
+    # Ошибка сохранения ответа или некорректный callback.
+    if status == "invalid":
+        if action == "survey_toggle":
+            error_message = (
+                "Не удалось сохранить выбор. "
+                "Возможно, опрос уже закрыт."
             )
-            return
-
-        if result == "limit_reached":
-            await event.ack(notification="Можно выбрать не более двух вариантов.")
-            return
-
-        elif result == "saved":
-            message = "Выбор сохранён."
-
+        elif action == "survey_done":
+            error_message = (
+                "Не удалось отправить ответ. "
+                "Возможно, опрос уже закрыт."
+            )
         else:
-            await send_callback_message(
-                event,
-                "Не удалось сохранить выбор. Возможно, опрос уже закрыт.",
+            error_message = (
+                "Не удалось сохранить ответ. "
+                "Возможно, опрос уже закрыт."
             )
-            return
 
-        # Обновляем состояние текущего вопроса в исходном сообщении.
-        question = get_next_question(max_user_id, instance_id)
+        await send_callback_message(event, error_message)
+        return
 
-        if question is None or question["question_id"] != question_id:
-            await edit_callback_message(
-                event,
-                "Не удалось обновить вопрос. Попробуй открыть опрос командой /start.",
-            )
-            return
-
-        options = get_question_options(question_id)
-        selected_ids = get_selected_options(max_user_id, question_id)
+    # Обновляем клавиатуру при выборе нескольких вариантов.
+    if status == "saved":
+        question = result["question"]
 
         keyboard = build_multiple_keyboard(
             question_id,
-            options,
-            selected_ids,
+            result["options"],
+            result["selected_ids"],
         )
 
         await edit_callback_message(
@@ -464,60 +533,42 @@ async def callback_handler(event: MessageCallback):
         )
         return
 
-    # Обрабатываем кнопку «Готово».
-    else:
-        result = submit_multiple_answer(
-            max_user_id=max_user_id,
-            instance_id=instance_id,
-            question_id=question_id,
+    # После успешного сохранения одиночного или множественного ответа
+    # получаем данные следующего вопроса из результата обработки.
+    if status != "submitted":
+        await send_callback_message(
+            event,
+            "Не удалось обработать ответ. Попробуй ещё раз.",
         )
+        return
 
-        if result == "incomplete":
-            await send_callback_message(
-                event,
-                "Сначала выбери хотя бы один вариант.",
-            )
-            return
+    message = result["message"]
+    question = result["question"]
 
-        if result == "already_submitted":
-            await send_callback_message(
-                event,
-                "Ты уже ответил на этот вопрос.",
-            )
-            return
-
-        if result != "submitted":
-            await send_callback_message(
-                event,
-                "Не удалось отправить ответ. Возможно, опрос уже закрыт.",
-            )
-            return
-
-        message = "Ответ отправлен!"
-
-    # После завершения ответа получаем следующий вопрос.
-    question = get_next_question(max_user_id, instance_id)
-
+    # Если вопросов больше нет — завершаем прохождение.
     if question is None:
+        if not result["completed"]:
+            logger.error(
+                "Не удалось зафиксировать завершение опроса. "
+                "MAX user_id: %s, instance_id: %s",
+                max_user_id,
+                result.get("instance_id"),
+            )
+
         await edit_callback_message(
             event,
             f"{message}\nТы ответил на все вопросы. Спасибо!",
         )
         return
 
-    options = get_question_options(question["question_id"])
+    options = result["options"]
 
-    # Формируем клавиатуру с учётом типа следующего вопроса.
+    # Формируем клавиатуру для следующего вопроса.
     if question["answer_type"] == "multiple":
-        selected_ids = get_selected_options(
-            max_user_id,
-            question["question_id"],
-        )
-
         keyboard = build_multiple_keyboard(
             question["question_id"],
             options,
-            selected_ids,
+            result["selected_ids"],
         )
 
     else:
@@ -526,13 +577,17 @@ async def callback_handler(event: MessageCallback):
                 [
                     CallbackButton(
                         text=option["title"],
-                        payload=f"survey:{question['question_id']}:{option['id']}",
+                        payload=(
+                            f"survey:{question['question_id']}:"
+                            f"{option['id']}"
+                        ),
                     )
                 ]
                 for option in options
             ]
         ).pack()
 
+    # Переходим к следующему вопросу, редактируя то же сообщение.
     await edit_callback_message(
         event,
         f"{message}\n\n{question['bot_text']}",
