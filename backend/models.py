@@ -200,6 +200,37 @@ class Administrator(Base):
     position: Mapped[str] = mapped_column(String(100))
 
 
+class TeacherClassAccess(Base):
+    __tablename__ = "teacher_class_accesses"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "teacher_id",
+            "class_id",
+            name="uq_teacher_class_access_teacher_class",
+        ),
+        ForeignKeyConstraint(
+            ["teacher_id", "school_id"],
+            ["teachers.id", "teachers.school_id"],
+            name="fk_teacher_class_access_teacher_school",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["class_id", "school_id", "academic_year_id"],
+            ["classes.id", "classes.school_id", "classes.academic_year_id"],
+            name="fk_teacher_class_access_class_school_year",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    teacher_id: Mapped[int] = mapped_column(Integer)
+    class_id: Mapped[int] = mapped_column(Integer)
+    school_id: Mapped[int] = mapped_column(Integer)
+    academic_year_id: Mapped[int] = mapped_column(Integer)
+
+
 class TeachingAssignment(Base):
     __tablename__ = "teaching_assignments"
 
@@ -458,6 +489,10 @@ class SurveyNotification(Base):
     __tablename__ = "survey_notifications"
 
     __table_args__ = (
+        CheckConstraint(
+            "progress_status IN ('not_started', 'in_progress', 'completed', 'closed')",
+            name="ck_survey_notifications_progress_status",
+        ),
         UniqueConstraint(
             "instance_id",
             "student_id",
@@ -511,6 +546,35 @@ class SurveyNotification(Base):
 
     error: Mapped[str | None] = mapped_column(
         Text,
+        nullable=True,
+    )
+
+    # Состояние прохождения опроса конкретным учеником.
+    progress_status: Mapped[str] = mapped_column(
+        String(20),
+        default="not_started",
+        server_default="not_started",
+    )
+
+    # ID последнего сообщения с вопросом в MAX.
+    # Нужен планировщику, чтобы закрыть сообщение в 18:00.
+    max_message_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
 
