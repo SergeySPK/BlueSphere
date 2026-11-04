@@ -31,6 +31,7 @@ from models import (
     SurveyResponse,
     SurveyResponseOption,
     Teacher,
+    TeacherClassAccess,
     TeachingAssignment,
     User,
 )
@@ -250,18 +251,18 @@ def get_user_access(
 
         teacher_ids = [teacher.id for teacher in teachers]
 
-        assigned_class_ids = db.scalars(
-            select(TeachingAssignment.class_id)
+        accessible_class_ids = db.scalars(
+            select(TeacherClassAccess.class_id)
             .join(
                 Class,
-                (Class.id == TeachingAssignment.class_id)
-                & (Class.school_id == TeachingAssignment.school_id)
-                & (Class.academic_year_id == TeachingAssignment.academic_year_id),
+                (Class.id == TeacherClassAccess.class_id)
+                & (Class.school_id == TeacherClassAccess.school_id)
+                & (Class.academic_year_id == TeacherClassAccess.academic_year_id),
             )
-            .where(TeachingAssignment.teacher_id.in_(teacher_ids))
+            .where(TeacherClassAccess.teacher_id.in_(teacher_ids))
         ).all()
 
-        class_ids.update(assigned_class_ids)
+        class_ids.update(accessible_class_ids)
 
     # Администратор имеет доступ к классам своих школ.
     admin_school_ids = db.scalars(
@@ -466,19 +467,19 @@ def can_access_survey_class(
     if is_admin is not None:
         return True
 
-    # Учитель должен иметь назначение на этот класс
+    # Учитель должен иметь доступ к этому классу
     # в соответствующем учебном году.
     is_teacher = db.scalar(
-        select(TeachingAssignment.id)
+        select(TeacherClassAccess.id)
         .join(
             Teacher,
-            Teacher.id == TeachingAssignment.teacher_id,
+            Teacher.id == TeacherClassAccess.teacher_id,
         )
         .where(
             Teacher.user_id == user.id,
-            TeachingAssignment.class_id == school_class.id,
-            TeachingAssignment.school_id == school_class.school_id,
-            TeachingAssignment.academic_year_id == school_class.academic_year_id,
+            TeacherClassAccess.class_id == school_class.id,
+            TeacherClassAccess.school_id == school_class.school_id,
+            TeacherClassAccess.academic_year_id == school_class.academic_year_id,
         )
         .limit(1)
     )

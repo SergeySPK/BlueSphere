@@ -3,10 +3,10 @@ from fastapi.testclient import TestClient
 from datetime import datetime, timezone, timedelta
 
 import main
-from survey_service import get_effective_survey_status
 from models import (
     Subject,
     Teacher,
+    TeacherClassAccess,
     TeachingAssignment,
     User,
     Class,
@@ -139,6 +139,15 @@ def teacher_auth_headers(survey_test_data, db_session):
     db_session.add(assignment)
     db_session.flush()
 
+    teacher_access = TeacherClassAccess(
+        teacher_id=teacher.id,
+        class_id=data["class"].id,
+        school_id=data["school"].id,
+        academic_year_id=data["academic_year"].id,
+    )
+    db_session.add(teacher_access)
+    db_session.flush()
+
     token, _ = main.create_access_token(user)
 
     return {"Authorization": f"Bearer {token}"}
@@ -170,6 +179,71 @@ def test_teacher_can_access_assigned_class_survey(
     response = survey_api_client.get(
         f"/api/schools/{school_id}/classes/{class_code}/surveys/{survey_date}",
         headers=teacher_auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["class_code"] == class_code
+    assert len(response.json()["questions"]) == 3
+
+
+def test_teacher_with_class_access_without_assignment_can_access_survey(
+    survey_test_data,
+    survey_api_client,
+    db_session,
+):
+    data = survey_test_data
+
+    # Создаём пользователя.
+    user = User(
+        sferum_id="999999997",
+        full_name="Учитель только с доступом к классу",
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    # Создаём учителя без предметных назначений.
+    teacher = Teacher(
+        user_id=user.id,
+        school_id=data["school"].id,
+    )
+    db_session.add(teacher)
+    db_session.flush()
+
+    # Выдаём доступ только к одному классу.
+    access = TeacherClassAccess(
+        teacher_id=teacher.id,
+        class_id=data["class"].id,
+        school_id=data["school"].id,
+        academic_year_id=data["academic_year"].id,
+    )
+    db_session.add(access)
+    db_session.flush()
+
+    token, _ = main.create_access_token(user)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    school_id = data["school"].id
+    class_code = data["class"].code
+    survey_date = data["instance"].survey_date.isoformat()
+
+    # Класс должен отображаться в списке доступных опросов.
+    response = survey_api_client.get(
+        f"/api/schools/{school_id}/survey-classes",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "code": class_code,
+            "name": data["class"].name,
+        }
+    ]
+
+    # Учитель должен получить агрегированную статистику.
+    response = survey_api_client.get(
+        f"/api/schools/{school_id}/classes/{class_code}/surveys/{survey_date}",
+        headers=headers,
     )
 
     assert response.status_code == 200
