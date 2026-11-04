@@ -948,61 +948,6 @@ def get_school_classes(
     return result
 
 
-@app.get("/api/classes", response_model=Dict[str, List[SchoolClass]])
-def get_classes(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Возвращает классы, доступные авторизованному пользователю."""
-
-    allowed_school_ids = get_user_school_ids(current_user, db)
-
-    # Старый маршрут оставляем только для пользователей,
-    # у которых есть доступ ровно к одной школе.
-    if len(allowed_school_ids) != 1:
-        raise HTTPException(
-            status_code=400,
-            detail="Для получения классов укажи школу",
-        )
-
-    school_id = next(iter(allowed_school_ids))
-
-    _, allowed_class_ids = get_user_access(current_user, db)
-
-    if not allowed_class_ids:
-        return {}
-
-    classes = db.scalars(
-        select(Class)
-        .where(
-            Class.school_id == school_id,
-            Class.id.in_(allowed_class_ids),
-        )
-        .order_by(Class.code)
-    ).all()
-
-    result: Dict[str, List[SchoolClass]] = {}
-
-    for school_class in classes:
-        grade = "".join(
-            character for character in school_class.code if character.isdigit()
-        )
-
-        if not grade:
-            continue
-
-        group_name = f"{grade} класс"
-
-        result.setdefault(group_name, []).append(
-            SchoolClass(
-                id=school_class.code,
-                name=school_class.name,
-            )
-        )
-
-    return result
-
-
 def get_daily_lesson_counts(
     db: Session,
     class_id: int,
@@ -1106,29 +1051,6 @@ def build_class_heatmap(
     ]
 
 
-@app.get("/api/classes/{class_id}/heatmap", response_model=List[LoadDay])
-def get_heatmap(
-    class_id: str,
-    month: str = "09",
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Старый маршрут получения тепловой карты."""
-
-    school_class = require_class_access(
-        class_code=class_id,
-        user=current_user,
-        db=db,
-    )
-
-    return build_class_heatmap(
-        school_class=school_class,
-        month=month,
-        current_user_id=current_user.id,
-        db=db,
-    )
-
-
 @app.get(
     "/api/schools/{school_id}/classes/{class_code}/heatmap",
     response_model=List[LoadDay],
@@ -1185,24 +1107,6 @@ def build_class_summary(school_class: Class, db: Session) -> ClassStatus:
         date=survey_date.strftime("%d.%m"),
         hasData=True,
     )
-
-
-@app.get("/api/classes/{class_id}/summary", response_model=ClassStatus)
-def get_summary(
-    class_id: str,
-    date: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Старый маршрут получения сводки класса."""
-
-    school_class = require_class_access(
-        class_code=class_id,
-        user=current_user,
-        db=db,
-    )
-
-    return build_class_summary(school_class, db)
 
 
 @app.get(
@@ -1547,29 +1451,6 @@ def build_class_recommendations(
     )
 
 
-@app.get("/api/classes/{class_id}/recommendations", response_model=Recommendation)
-def get_recommendations(
-    class_id: str,
-    month: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Старый маршрут получения рекомендаций."""
-
-    school_class = require_class_access(
-        class_code=class_id,
-        user=current_user,
-        db=db,
-        allowed_roles={"teacher", "admin"},
-    )
-
-    return build_class_recommendations(
-        school_class=school_class,
-        month=month,
-        db=db,
-    )
-
-
 @app.get(
     "/api/schools/{school_id}/classes/{class_code}/recommendations",
     response_model=Recommendation,
@@ -1691,24 +1572,6 @@ def build_class_schedule(
     ]
 
 
-@app.get("/api/classes/{class_id}/schedule", response_model=List[Lesson])
-def get_schedule(
-    class_id: str,
-    date: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Старый маршрут получения расписания."""
-
-    school_class = require_class_access(
-        class_code=class_id,
-        user=current_user,
-        db=db,
-    )
-
-    return build_class_schedule(school_class, date, db)
-
-
 @app.get(
     "/api/schools/{school_id}/classes/{class_code}/schedule",
     response_model=List[Lesson],
@@ -1730,68 +1593,6 @@ def get_school_schedule(
     )
 
     return build_class_schedule(school_class, date, db)
-
-
-@app.put("/api/schedule/{lesson_id}", response_model=Lesson)
-def update_lesson(
-    lesson_id: str,
-    request: LessonUpdateRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Изменяет тип урока и сохраняет пользователя, который внёс изменение."""
-    try:
-        numeric_lesson_id = int(lesson_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="ID урока должен быть числом.",
-        )
-
-    lesson = db.get(Schedule, numeric_lesson_id)
-
-    if lesson is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Урок не найден.",
-        )
-
-    editor = current_user
-
-    if not can_edit_lesson(lesson, editor, db):
-        raise HTTPException(
-            status_code=403,
-            detail="У вас нет прав на редактирование этого урока.",
-        )
-
-    now = datetime.now(timezone.utc)
-
-    editing_session = db.scalar(
-        select(EditingSession)
-        .where(EditingSession.schedule_id == lesson.id)
-        .with_for_update()
-    )
-
-    if (
-        editing_session is None
-        or editing_session.user_id != editor.id
-        or editing_session.expires_at <= now
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="Нет активной сессии редактирования этого урока.",
-        )
-
-    lesson.lesson_type = request.lesson_type
-    lesson.updated_by_user_id = editor.id
-
-    # Продлеваем сессию после успешного изменения урока.
-    editing_session.expires_at = now + timedelta(seconds=EDITING_SESSION_TTL_SECONDS)
-
-    db.commit()
-    db.refresh(lesson)
-
-    return get_lesson_response(db, lesson.id)
 
 
 EDITING_SESSION_TTL_SECONDS = 60
@@ -1853,11 +1654,25 @@ def can_edit_lesson(
 
 
 def get_editing_user_and_lesson(
+    school_id: int,
+    class_code: str,
     lesson_id: str,
     user: User,
     db: Session,
-):
-    """Находит урок и проверяет, что пользователь ведёт этот урок."""
+) -> tuple[Schedule, User]:
+    """
+    Находит занятие и проверяет доступ пользователя
+    к школе, классу и редактированию конкретного занятия.
+    """
+
+    # Сначала проверяем доступ к выбранной школе и классу.
+    school_class = require_school_class_access(
+        school_id=school_id,
+        class_code=class_code,
+        user=user,
+        db=db,
+        allowed_roles={"teacher", "admin"},
+    )
 
     try:
         numeric_lesson_id = int(lesson_id)
@@ -1868,12 +1683,28 @@ def get_editing_user_and_lesson(
         )
 
     lesson = db.get(Schedule, numeric_lesson_id)
+
     if lesson is None:
         raise HTTPException(
             status_code=404,
             detail="Урок не найден.",
         )
 
+    # Проверяем, что занятие действительно относится
+    # к классу, указанному в URL.
+    lesson_class_id = db.scalar(
+        select(TeachingAssignment.class_id).where(
+            TeachingAssignment.id == lesson.assignment_id
+        )
+    )
+
+    if lesson_class_id != school_class.id:
+        raise HTTPException(
+            status_code=404,
+            detail="Урок не найден в указанном классе.",
+        )
+
+    # Проверяем право редактирования самого занятия.
     if not can_edit_lesson(lesson, user, db):
         raise HTTPException(
             status_code=403,
@@ -1883,15 +1714,75 @@ def get_editing_user_and_lesson(
     return lesson, user
 
 
-@app.post("/api/schedule/{lesson_id}/editing")
+@app.put(
+    "/api/schools/{school_id}/classes/{class_code}/schedule/{lesson_id}",
+    response_model=Lesson,
+)
+def update_lesson(
+    school_id: int,
+    class_code: str,
+    lesson_id: str,
+    request: LessonUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Изменяет тип занятия в указанном классе."""
+
+    lesson, editor = get_editing_user_and_lesson(
+        school_id=school_id,
+        class_code=class_code,
+        lesson_id=lesson_id,
+        user=current_user,
+        db=db,
+    )
+
+    now = datetime.now(timezone.utc)
+
+    editing_session = db.scalar(
+        select(EditingSession)
+        .where(EditingSession.schedule_id == lesson.id)
+        .with_for_update()
+    )
+
+    if (
+        editing_session is None
+        or editing_session.user_id != editor.id
+        or editing_session.expires_at <= now
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Нет активной сессии редактирования этого урока.",
+        )
+
+    lesson.lesson_type = request.lesson_type
+    lesson.updated_by_user_id = editor.id
+
+    # Продлеваем сессию после успешного изменения урока.
+    editing_session.expires_at = now + timedelta(seconds=EDITING_SESSION_TTL_SECONDS)
+
+    db.commit()
+    db.refresh(lesson)
+
+    return get_lesson_response(db, lesson.id)
+
+
+@app.post("/api/schools/{school_id}/classes/{class_code}/schedule/{lesson_id}/editing")
 def start_editing(
+    school_id: int,
+    class_code: str,
     lesson_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Начинает или возобновляет собственную сессию редактирования."""
 
-    lesson, user = get_editing_user_and_lesson(lesson_id, current_user, db)
+    lesson, user = get_editing_user_and_lesson(
+        school_id=school_id,
+        class_code=class_code,
+        lesson_id=lesson_id,
+        user=current_user,
+        db=db,
+    )
 
     now = datetime.now(timezone.utc)
 
@@ -1910,7 +1801,11 @@ def start_editing(
 
         session.expires_at = now + timedelta(seconds=EDITING_SESSION_TTL_SECONDS)
         db.commit()
-        return {"success": True, "expires_in": EDITING_SESSION_TTL_SECONDS}
+
+        return {
+            "success": True,
+            "expires_in": EDITING_SESSION_TTL_SECONDS,
+        }
 
     if session is not None:
         db.delete(session)
@@ -1921,6 +1816,7 @@ def start_editing(
         user_id=user.id,
         expires_at=now + timedelta(seconds=EDITING_SESSION_TTL_SECONDS),
     )
+
     db.add(session)
 
     try:
@@ -1932,18 +1828,29 @@ def start_editing(
             detail="Этот урок уже редактирует другой пользователь.",
         )
 
-    return {"success": True, "expires_in": EDITING_SESSION_TTL_SECONDS}
+    return {
+        "success": True,
+        "expires_in": EDITING_SESSION_TTL_SECONDS,
+    }
 
 
-@app.put("/api/schedule/{lesson_id}/editing")
+@app.put("/api/schools/{school_id}/classes/{class_code}/schedule/{lesson_id}/editing")
 def renew_editing(
+    school_id: int,
+    class_code: str,
     lesson_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Продлевает только собственную активную сессию."""
 
-    lesson, user = get_editing_user_and_lesson(lesson_id, current_user, db)
+    lesson, user = get_editing_user_and_lesson(
+        school_id=school_id,
+        class_code=class_code,
+        lesson_id=lesson_id,
+        user=current_user,
+        db=db,
+    )
 
     now = datetime.now(timezone.utc)
 
@@ -1960,20 +1867,34 @@ def renew_editing(
         )
 
     session.expires_at = now + timedelta(seconds=EDITING_SESSION_TTL_SECONDS)
+
     db.commit()
 
-    return {"success": True, "expires_in": EDITING_SESSION_TTL_SECONDS}
+    return {
+        "success": True,
+        "expires_in": EDITING_SESSION_TTL_SECONDS,
+    }
 
 
-@app.delete("/api/schedule/{lesson_id}/editing")
+@app.delete(
+    "/api/schools/{school_id}/classes/{class_code}/schedule/{lesson_id}/editing"
+)
 def stop_editing(
+    school_id: int,
+    class_code: str,
     lesson_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Завершает только собственную сессию редактирования."""
 
-    lesson, user = get_editing_user_and_lesson(lesson_id, current_user, db)
+    lesson, user = get_editing_user_and_lesson(
+        school_id=school_id,
+        class_code=class_code,
+        lesson_id=lesson_id,
+        user=current_user,
+        db=db,
+    )
 
     session = db.scalar(
         select(EditingSession)
