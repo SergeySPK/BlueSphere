@@ -615,6 +615,7 @@ class Lesson(BaseModel):
     lesson_type: str
     subgroup: int = 0
     updated_by: Optional[str] = None  # ФИО того, кто менял
+    is_editable: bool = False
 
 
 class LessonUpdateRequest(BaseModel):
@@ -1498,6 +1499,7 @@ def build_class_schedule(
     school_class: Class,
     date: str,
     db: Session,
+    user: User,
 ) -> List[Lesson]:
     """Формирует расписание класса на указанную дату."""
 
@@ -1561,6 +1563,7 @@ def build_class_schedule(
             updated_by=(
                 format_teacher_name(editor_full_name) if editor_full_name else None
             ),
+            is_editable=can_edit_lesson(schedule, user, db),
         )
         for (
             schedule,
@@ -1592,7 +1595,7 @@ def get_school_schedule(
         db=db,
     )
 
-    return build_class_schedule(school_class, date, db)
+    return build_class_schedule(school_class, date, db, current_user)
 
 
 EDITING_SESSION_TTL_SECONDS = 60
@@ -1621,6 +1624,7 @@ def can_edit_lesson(
             Teacher.user_id == user.id,
             Teacher.school_id == Class.school_id,
             TeachingAssignment.academic_year_id == Class.academic_year_id,
+            TeachingAssignment.school_id == Class.school_id,
         )
     )
 
@@ -1902,7 +1906,13 @@ def stop_editing(
         .with_for_update()
     )
 
-    if session is not None and session.user_id == user.id:
+    if session is not None:
+        if session.user_id != user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Нельзя завершить чужую сессию редактирования.",
+            )
+
         db.delete(session)
         db.commit()
 
