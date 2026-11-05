@@ -196,8 +196,12 @@ def build_multiple_keyboard(question_id: int, options: list, selected_ids: list)
 
 
 async def send_callback_message(event, text: str):
-    """Подтверждает callback и отправляет отдельное сообщение."""
-    await event.ack()
+    """Подтверждает callback и отправляет отдельное сообщение в чат."""
+
+    await event.ack(
+        notification="Ответ не отправлен."
+    )
+
     await event.bot.send_message(
         user_id=event.callback.user.user_id,
         text=text,
@@ -674,7 +678,7 @@ async def callback_handler(event: MessageCallback):
     if status == "incomplete":
         await send_callback_message(
             event,
-            "Сначала выбери хотя бы один вариант.",
+            "Пожалуйста, выберите хотя бы один вариант ответа.",
         )
         return
 

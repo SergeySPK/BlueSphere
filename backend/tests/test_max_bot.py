@@ -1,6 +1,7 @@
 import asyncio
 import pytest
 from types import SimpleNamespace
+from datetime import datetime, timezone
 import max_bot
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -393,7 +394,7 @@ def test_callback_handler_rejects_incomplete_multiple_answer(
 
     asyncio.run(max_bot_module.callback_handler(event))
 
-    assert messages == ["Сначала выбери хотя бы один вариант."]
+    assert messages == ["Пожалуйста, выберите хотя бы один вариант ответа."]
 
 
 def test_callback_handler_completes_multiple_answer_and_advances(
@@ -909,6 +910,7 @@ def test_start_handler_restores_multiple_answer_draft(
         instance_question_id=first_question.id,
         student_id=data["student"].id,
         status="submitted",
+        submitted_at=datetime.now(timezone.utc),
     )
 
     db_session.add(first_response)
@@ -1025,8 +1027,6 @@ def test_start_handler_opens_next_unanswered_question(
     max_bot_module,
     monkeypatch,
 ):
-    from datetime import datetime, timezone
-
     data = survey_test_data
 
     notification = SurveyNotification(
