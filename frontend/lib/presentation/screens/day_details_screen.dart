@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
+import '../../domain/class_status.dart';
 import '../../domain/lesson.dart';
 import '../../data/api_service.dart';
 import '../uikit/colors.dart';
@@ -18,21 +19,8 @@ class DayDetailsScreen extends StatefulWidget {
   final String classId;
   final int dayLevel;
   final bool isTeacher;
-  final int bannerLevel;
-  final String statusDate;
 
-  const DayDetailsScreen({
-    super.key,
-    required this.day,
-    required this.monthName,
-    required this.monthNumber,
-    required this.className,
-    required this.classId,
-    required this.dayLevel,
-    required this.bannerLevel,
-    required this.statusDate,
-    required this.isTeacher,
-  });
+  const DayDetailsScreen({super.key, required this.day, required this.monthName, required this.monthNumber, required this.className, required this.classId, required this.dayLevel, required this.isTeacher});
 
   @override
   State<DayDetailsScreen> createState() => _DayDetailsScreenState();
@@ -42,11 +30,14 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
   List<Lesson>? _lessons;
   bool _isLoading = true;
   int? _editingLessonNumber;
+  ClassStatus? _status;
+  String _displayDate = '';
 
   @override
   void initState() {
     super.initState();
     _loadSchedule();
+    _loadSummary();
   }
 
   Future<void> _loadSchedule() async {
@@ -69,18 +60,43 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
     }
   }
 
+  Future<void> _loadSummary() async {
+    try {
+      // Запрашиваем список опросов
+      final surveys = await ApiService.getClassSurveys(widget.classId);
+      String dateToFetch = '';
+
+      if (surveys.isNotEmpty) {
+        dateToFetch = surveys[0]['survey_date'];
+      } else {
+        final now = DateTime.now();
+        dateToFetch = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      }
+
+      // Запрашиваем summary на эту дату
+      final summary = await ApiService.getSummary(widget.classId, dateToFetch);
+
+      if (mounted) {
+        setState(() {
+          _status = summary;
+          _displayDate = _formatDate(dateToFetch);
+        });
+      }
+    } catch (e) {
+      debugPrint('Ошибка загрузки баннера: $e');
+    }
+  }
+
   Color? _randomEditColor;
 
   Future<void> _editLesson(Lesson lesson) async {
-    // 1. Начинаем сессию редактирования (POST /editing)
     try {
-      await ApiService.startEditing(lesson.id);
+      await ApiService.startEditing(widget.classId, lesson.id);
     } catch (e) {
-      // 409 = урок занят другим, 403 = нет прав и т.п.
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Не удалось начать редактирование. Возможно, урок уже редактирует другой пользователь.')));
       }
-      return; // диалог не открываем
+      return;
     }
 
     final random = Random();
@@ -135,7 +151,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                     TextButton(
                       onPressed: () async {
                         try {
-                          await ApiService.stopEditing(lesson.id);
+                          await ApiService.stopEditing(widget.classId, lesson.id);
                         } catch (e) {
                           debugPrint('stopEditing error: $e');
                         }
@@ -155,7 +171,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
 
                         if (newType.isEmpty || newType == lesson.lessonType) {
                           try {
-                            await ApiService.stopEditing(lesson.id);
+                            await ApiService.stopEditing(widget.classId, lesson.id);
                           } catch (e) {
                             debugPrint('stopEditing error: $e');
                           }
@@ -166,14 +182,13 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                         }
                         bool success = false;
                         try {
-                          success = await ApiService.updateLesson(lesson.id, newType);
+                          success = await ApiService.updateLesson(widget.classId, lesson.id, newType);
                         } catch (e) {
                           debugPrint('updateLesson error: $e');
                           success = false;
                         } finally {
-                          // Освобождаем сессию всегда
                           try {
-                            await ApiService.stopEditing(lesson.id);
+                            await ApiService.stopEditing(widget.classId, lesson.id);
                           } catch (e) {
                             debugPrint('stopEditing error: $e');
                           }
@@ -214,6 +229,19 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
     );
   }
 
+  String _formatDate(String isoDate) {
+    if (isoDate.isEmpty) return '';
+    try {
+      final parts = isoDate.split('-');
+      if (parts.length == 3) {
+        final month = int.parse(parts[1]);
+        final day = int.parse(parts[2]);
+        return '${day.toString().padLeft(2, '0')}.${month.toString().padLeft(2, '0')}';
+      }
+    } catch (e) {}
+    return isoDate;
+  }
+
   Color _getLoadColor(int level) {
     switch (level) {
       case 0:
@@ -246,14 +274,15 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
             CustomHeader(title: widget.className, showBack: true, onBack: () => Navigator.pop(context)),
             Expanded(
               child: _isLoading
-                  ? Center(child: CircularProgressIndicator())
+                  ? Center(child: CircularProgressIndicator(color: loadMax))
                   : SingleChildScrollView(
                       padding: po(t: 8.fh, l: 16.fw, r: 16.fw),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          StatusBanner(level: widget.bannerLevel, date: widget.statusDate, showButton: false),
+                          if (_status != null) StatusBanner(level: (_status!.hasData && _status!.level != null) ? _status!.level! : 4, date: _displayDate, showButton: false),
                           SizedBox(height: 11.fh),
+
                           if (_lessons != null)
                             ScheduleCard(
                               day: widget.day.toString(),

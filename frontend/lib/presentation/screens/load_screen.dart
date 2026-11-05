@@ -32,6 +32,7 @@ class _LoadScreenState extends State<LoadScreen> {
   Recommendation? _recommendation;
   bool _isLoading = true;
   int? _errorCode;
+  String _displayDate = '';
 
   bool get isClassSelected => widget.classId.isNotEmpty && widget.classId != 'Выберите класс';
 
@@ -69,8 +70,9 @@ class _LoadScreenState extends State<LoadScreen> {
 
     final now = DateTime.now();
     final month = now.month.toString().padLeft(2, '0');
-    final date = "${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}";
+    final todayDate = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
 
+    // Загружаем календарь
     try {
       final heatmap = await ApiService.getHeatmap(widget.classId, month);
       if (mounted) setState(() => _loadDays = heatmap);
@@ -90,13 +92,28 @@ class _LoadScreenState extends State<LoadScreen> {
       return;
     }
 
+    // Загружаем статус и дату последнего опроса
     try {
-      final status = await ApiService.getSummary(widget.classId, date);
-      if (mounted) setState(() => _status = status);
+      final surveys = await ApiService.getClassSurveys(widget.classId);
+      String dateForSummary = todayDate;
+
+      if (surveys.isNotEmpty) {
+        dateForSummary = surveys[0]['survey_date'];
+      }
+
+      final status = await ApiService.getSummary(widget.classId, dateForSummary);
+
+      if (mounted) {
+        setState(() {
+          _status = status;
+          _displayDate = _formatDate(dateForSummary);
+        });
+      }
     } catch (e) {
       print('Баннер недоступен: $e');
     }
 
+    // Загружаем рекомендации (только для учителя)
     if (widget.isTeacher) {
       try {
         final recommendations = await ApiService.getRecommendations(widget.classId);
@@ -106,9 +123,23 @@ class _LoadScreenState extends State<LoadScreen> {
       }
     }
 
+    // Выключаем загрузку
     if (mounted) {
       setState(() => _isLoading = false);
     }
+  }
+
+  String _formatDate(String isoDate) {
+    if (isoDate.isEmpty) return '';
+    try {
+      final parts = isoDate.split('-');
+      if (parts.length == 3) {
+        final month = int.parse(parts[1]);
+        final day = int.parse(parts[2]);
+        return '${day.toString().padLeft(2, '0')}.${month.toString().padLeft(2, '0')}';
+      }
+    } catch (e) {}
+    return isoDate;
   }
 
   @override
@@ -140,13 +171,9 @@ class _LoadScreenState extends State<LoadScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_status == null)
-            Center(
-              child: Text('Не удалось загрузить статус', style: TextStyle(color: black)),
-            )
-          else
-            StatusBanner(level: _status!.level ?? 4, date: _status!.date ?? '', showButton: true, onGoToSummary: widget.onGoToSummary),
+          if (_status != null) StatusBanner(level: (_status!.hasData && _status!.level != null) ? _status!.level! : 4, date: _displayDate, showButton: true, onGoToSummary: widget.onGoToSummary),
           SizedBox(height: 11.fh),
+
           LoadCalendar(
             date: DateTime.now(),
             loadDays: _loadDays ?? [],
@@ -156,20 +183,11 @@ class _LoadScreenState extends State<LoadScreen> {
               final currentMonth = months[now.month - 1];
               final currentMonthNumber = now.month.toString();
               final dayData = _loadDays!.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: 4, isEditing: false));
+
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => DayDetailsScreen(
-                    day: day,
-                    monthName: currentMonth,
-                    isTeacher: widget.isTeacher,
-                    monthNumber: currentMonthNumber,
-                    className: widget.className,
-                    classId: widget.classId,
-                    dayLevel: dayData.level,
-                    bannerLevel: _status?.level ?? 4,
-                    statusDate: _status?.date ?? '',
-                  ),
+                  builder: (context) => DayDetailsScreen(day: day, monthName: currentMonth, isTeacher: widget.isTeacher, monthNumber: currentMonthNumber, className: widget.className, classId: widget.classId, dayLevel: dayData.level),
                 ),
               );
             },

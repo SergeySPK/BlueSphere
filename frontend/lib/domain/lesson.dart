@@ -1,12 +1,13 @@
+// Модель данных для одного урока в расписании
 class Lesson {
-  final String id;
-  final int lessonNumber;
-  final String subjectName;
-  final String teacherName;
-  final String room;
-  final String lessonType;
-  final int subgroup;
-  final String? updatedBy;
+  final String id; // Уникальный идентификатор урока
+  final int lessonNumber; // Порядковый номер урока в расписании
+  final String subjectName; // Название предмета
+  final String teacherName; // ФИО преподавателя, ведущего урок
+  final String room; // Номер кабинета
+  final String lessonType; // Тип занятия
+  final int subgroup; // Номер подгруппы
+  final String? updatedBy; // ID того, кто последним изменил тип урока
 
   Lesson({required this.id, required this.lessonNumber, required this.subjectName, required this.teacherName, required this.room, required this.lessonType, required this.subgroup, this.updatedBy});
 

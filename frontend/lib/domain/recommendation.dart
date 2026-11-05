@@ -1,7 +1,7 @@
-// для блока с плашками дней на экране "Нагрузка"
+// Модель рекомендаций для экрана Нагрузка
 class Recommendation {
-  final List<int> daysToReduce;
-  final List<int> daysToMoveTo;
+  final List<int> daysToReduce; // Дни перегрузки
+  final List<int> daysToMoveTo; // Дни разгрузки
 
   Recommendation({required this.daysToReduce, required this.daysToMoveTo});
 
@@ -10,9 +10,10 @@ class Recommendation {
   }
 }
 
+// Модель текстовых рекомендаций от ИИ
 class AiTextRecommendation {
-  final String title;
-  final String description;
+  final String title; // Заголовок совета
+  final String description; // Текст совета
 
   AiTextRecommendation({required this.title, required this.description});
 

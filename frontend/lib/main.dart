@@ -103,11 +103,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
       } catch (e) {
         debugPrint('Свайпы недоступны: $e');
       }
-      // Получаем данные для авторизации
+      // Получаем данные авторизации
       final initData = webApp.initData;
-
       if (initData != null && initData.isNotEmpty) {
-        // Отправляем данные на наш бэкенд для получения токена и ролей
+        // Отправляем данные на бэкенд
         final authData = await ApiService.auth(initData);
 
         if (authData != null) {
@@ -115,13 +114,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
           _classIds = List<String>.from(authData['class_ids'] ?? []);
         }
       } else {
-        debugPrint('initData пуст. Возможно, приложение открыто вне MAX.');
+        debugPrint('initData пуст. Приложение запущено вне MAX.');
       }
     } catch (e) {
       debugPrint('Ошибка инициализации MAX: $e');
     }
-
-    // Скрываем сплэш (неважно, успешно прошла авторизация или нет)
     if (mounted) {
       setState(() {
         _isLoading = false;
@@ -134,10 +131,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (_isLoading) {
       return const SplashScreen();
     }
+    // Передаем полученные роли и классы
     return MainScreen(roles: _roles, classIds: _classIds);
   }
 }
 
+// Главный экран с вкладками
 class MainScreen extends StatefulWidget {
   final List<String> roles;
   final List<String> classIds;

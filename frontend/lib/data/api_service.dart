@@ -10,41 +10,6 @@ class ApiService {
 
   static String? _token;
   static int? _schoolId;
-  static List<String>? _roles;
-
-  static void setTestToken(String token) {
-    _token = token;
-  }
-
-  // Демо-авторизация (для локальных тестов)
-  static Future<Map<String, dynamic>?> demoAuth(String sferumId) async {
-    try {
-      final response = await http.post(Uri.parse('$baseUrl/api/demo_auth'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'sferum_id': sferumId}));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        _token = data['access_token']; // Сохраняем токен
-        _schoolId = data['schools'];
-
-        // Сохраняем ID школы
-        final schools = data['schools'] as List?;
-        if (schools != null && schools.isNotEmpty) {
-          _schoolId = schools[0]['id'];
-        }
-
-        return data;
-      } else {
-        throw Exception(response.statusCode);
-      }
-    } catch (e) {
-      print('Ошибка demoAuth: $e');
-      rethrow;
-    }
-  }
-
-  static void setTestSchoolId(int id) {
-    _schoolId = id;
-  }
 
   // Авторизация
   static Future<Map<String, dynamic>?> auth(String initData) async {
@@ -54,13 +19,13 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         _token = data['access_token'];
-        _roles = List<String>.from(data['roles'] ?? []);
+
+        // _roles мы удалили, так как она нигде не использовалась
+
         final schools = data['schools'] as List?;
         if (schools != null && schools.isNotEmpty) {
           _schoolId = schools[0]['id'];
-          print('Школа ID: $_schoolId');
         }
-
         return data;
       } else {
         throw Exception(response.statusCode);
@@ -74,7 +39,6 @@ class ApiService {
   // Получение классов (для учителя/админа)
   static Future<Map<String, List<SchoolClass>>> getClasses() async {
     try {
-      // Новый путь с ID школы
       final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
@@ -97,7 +61,6 @@ class ApiService {
   // Календарь (Тепловая карта)
   static Future<List<LoadDay>> getHeatmap(String classId, String month) async {
     try {
-      // Новый путь
       final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/heatmap?month=$month'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
@@ -112,10 +75,9 @@ class ApiService {
     }
   }
 
-  // Статус для баннера
+  // Статус для баннера (БЕЗ КЭША)
   static Future<ClassStatus> getSummary(String classId, String date) async {
     try {
-      // Новый путь
       final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/summary?date=$date'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
@@ -132,7 +94,6 @@ class ApiService {
   // Рекомендации
   static Future<Recommendation> getRecommendations(String classId) async {
     try {
-      // Новый путь
       final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/recommendations'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
@@ -149,7 +110,6 @@ class ApiService {
   // Расписание на день
   static Future<List<dynamic>> getSchedule(String classId, String date) async {
     try {
-      // Новый путь
       final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/schedule?date=$date'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
 
       if (response.statusCode == 200) {
@@ -163,10 +123,14 @@ class ApiService {
     }
   }
 
-  // Обновление типа урока
-  static Future<bool> updateLesson(String lessonId, String newType) async {
+  // 7. Обновление типа урока
+  static Future<bool> updateLesson(String classId, String lessonId, String newType) async {
     try {
-      final response = await http.put(Uri.parse('$baseUrl/api/schedule/$lessonId'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'}, body: jsonEncode({'lesson_type': newType}));
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/schedule/$lessonId'),
+        headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'},
+        body: jsonEncode({'lesson_type': newType}),
+      );
 
       if (response.statusCode == 200) {
         return true;
@@ -179,10 +143,10 @@ class ApiService {
     }
   }
 
-  // Начать редактирование
-  static Future<void> startEditing(String lessonId) async {
+  // 8. Начать редактирование
+  static Future<void> startEditing(String classId, String lessonId) async {
     try {
-      final response = await http.post(Uri.parse('$baseUrl/api/schedule/$lessonId/editing'), headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
+      final response = await http.post(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/schedule/$lessonId/editing'), headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
       if (response.statusCode != 200) throw Exception(response.statusCode);
     } catch (e) {
       print('Ошибка startEditing: $e');
@@ -190,10 +154,10 @@ class ApiService {
     }
   }
 
-  // Продлить редактирование
-  static Future<void> renewEditing(String lessonId) async {
+  // 9. Продлить редактирование
+  static Future<void> renewEditing(String classId, String lessonId) async {
     try {
-      final response = await http.put(Uri.parse('$baseUrl/api/schedule/$lessonId/editing'), headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
+      final response = await http.put(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/schedule/$lessonId/editing'), headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
       if (response.statusCode != 200) throw Exception(response.statusCode);
     } catch (e) {
       print('Ошибка renewEditing: $e');
@@ -201,13 +165,43 @@ class ApiService {
     }
   }
 
-  // Закончить редактирование
-  static Future<void> stopEditing(String lessonId) async {
+  // 10. Закончить редактирование
+  static Future<void> stopEditing(String classId, String lessonId) async {
     try {
-      final response = await http.delete(Uri.parse('$baseUrl/api/schedule/$lessonId/editing'), headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
+      final response = await http.delete(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/schedule/$lessonId/editing'), headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
       if (response.statusCode != 200) throw Exception(response.statusCode);
     } catch (e) {
       print('Ошибка stopEditing: $e');
+      rethrow;
+    }
+  }
+
+  // 12. Получить список доступных опросов для класса
+  static Future<List<dynamic>> getClassSurveys(String classId) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/surveys'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception(response.statusCode);
+      }
+    } catch (e) {
+      print('Ошибка getClassSurveys: $e');
+      rethrow;
+    }
+  }
+
+  // 13. Получить статистику по конкретному опросу
+  static Future<Map<String, dynamic>> getSurveyStatistics(String classId, String surveyDate) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/api/schools/$_schoolId/classes/$classId/surveys/$surveyDate'), headers: {'Content-Type': 'application/json', if (_token != null) 'Authorization': 'Bearer $_token'});
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception(response.statusCode);
+      }
+    } catch (e) {
+      print('Ошибка getSurveyStatistics: $e');
       rethrow;
     }
   }
