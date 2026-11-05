@@ -1216,6 +1216,10 @@ def submit_multiple_answer(
             response.status = "submitted"
             response.submitted_at = datetime.now(timezone.utc)
 
+            # Сохраняем изменения в рамках текущей транзакции,
+            # чтобы следующие SELECT увидели статус submitted.
+            db.flush()
+
         return "submitted"
 
     except Exception:
