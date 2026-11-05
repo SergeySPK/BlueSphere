@@ -4,7 +4,7 @@ import os
 from datetime import datetime, time as datetime_time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import Date, Time, and_, case, cast, func, or_, select, update
+from sqlalchemy import Date, Time, and_, case, cast, delete, func, or_, select, update
 
 from database import SessionLocal
 from max_sender import create_max_bot, send_notification
@@ -14,6 +14,8 @@ from models import (
     Student,
     SurveyInstance,
     SurveyNotification,
+    SurveyInstanceQuestion,
+    SurveyResponse,
     User,
 )
 from survey_instance_service import (
@@ -27,6 +29,7 @@ CHECK_INTERVAL_SECONDS = 60
 MAX_NOTIFICATION_ATTEMPTS = 3
 SENDING_TIMEOUT_MINUTES = 10
 NOTIFICATION_BATCH_SIZE = 20
+NOTIFICATION_HEARTBEAT_SECONDS = 60
 RETRY_DELAY_MINUTES = 5
 
 # Реальная отправка отключена по умолчанию.
@@ -224,10 +227,283 @@ def run_scheduler_once() -> None:
         session.close()
 
 
+def delete_expired_draft_responses(
+    session,
+    now_utc: datetime,
+) -> int:
+    """
+    Удаляет черновые ответы для опросов, срок которых истёк.
+
+    Связанные варианты ответов удаляются автоматически
+    через ON DELETE CASCADE.
+
+    Отправленные ответы не затрагиваются.
+    """
+
+    expired_instance_ids = select(SurveyInstance.id).where(
+        SurveyInstance.closes_at <= now_utc,
+    )
+
+    expired_question_ids = select(
+        SurveyInstanceQuestion.id
+    ).where(
+        SurveyInstanceQuestion.instance_id.in_(
+            expired_instance_ids
+        )
+    )
+
+    draft_response_ids = select(
+        SurveyResponse.id
+    ).where(
+        SurveyResponse.status == "draft",
+        SurveyResponse.instance_question_id.in_(
+            expired_question_ids
+        ),
+    )
+
+    result = session.execute(
+        delete(SurveyResponse).where(
+            SurveyResponse.id.in_(draft_response_ids)
+        )
+    )
+
+    deleted_count = result.rowcount or 0
+
+    session.commit()
+
+    return deleted_count
+
+
+def mark_survey_notification_closed(
+    notification_id: int,
+    now_utc: datetime,
+) -> None:
+    """Фиксирует закрытие прохождения опроса конкретным учеником."""
+
+    session = SessionLocal()
+
+    try:
+        notification = session.get(
+            SurveyNotification,
+            notification_id,
+        )
+
+        if notification is None:
+            return
+
+        # Не изменяем успешно завершённые прохождения.
+        if notification.progress_status == "completed":
+            return
+
+        if notification.progress_status in (
+            "not_started",
+            "in_progress",
+        ):
+            notification.progress_status = "closed"
+            notification.closed_at = now_utc
+
+            session.commit()
+
+    except Exception:
+        session.rollback()
+        logger.exception(
+            "Не удалось закрыть прохождение уведомления %s",
+            notification_id,
+        )
+        raise
+
+    finally:
+        session.close()
+
+
+async def close_expired_student_surveys(
+    bot,
+    now_utc: datetime,
+) -> int:
+    """
+    Закрывает просроченные прохождения.
+
+    Сначала закрывает прохождения в БД и удаляет черновики.
+    Затем, если MAX Bot доступен, редактирует сообщения.
+
+    Если редактирование не удалось, max_message_id сохраняется,
+    чтобы повторить операцию в следующем цикле планировщика.
+    """
+
+    session = SessionLocal()
+
+    try:
+        deleted_count = delete_expired_draft_responses(
+            session,
+            now_utc,
+        )
+
+        if deleted_count:
+            logger.info(
+                "Удалено черновых ответов просроченных опросов: %s",
+                deleted_count,
+            )
+
+        rows = session.execute(
+            select(
+                SurveyNotification.id,
+                SurveyNotification.progress_status,
+                SurveyNotification.max_message_id,
+            )
+            .join(
+                SurveyInstance,
+                SurveyInstance.id == SurveyNotification.instance_id,
+            )
+            .where(
+                SurveyInstance.closes_at <= now_utc,
+                or_(
+                    SurveyNotification.progress_status.in_(
+                        ["not_started", "in_progress"]
+                    ),
+                    and_(
+                        SurveyNotification.progress_status == "closed",
+                        SurveyNotification.max_message_id.is_not(None),
+                    ),
+                ),
+            )
+            .order_by(SurveyNotification.id)
+        ).all()
+
+        notifications = [
+            {
+                "id": row.id,
+                "progress_status": row.progress_status,
+                "max_message_id": row.max_message_id,
+            }
+            for row in rows
+        ]
+
+        # Закрываем все незавершённые прохождения в БД,
+        # независимо от доступности MAX API.
+        notification_ids = [
+            item["id"]
+            for item in notifications
+            if item["progress_status"] in ("not_started", "in_progress")
+        ]
+
+        closed_count = 0
+
+        if notification_ids:
+            result = session.execute(
+                update(SurveyNotification)
+                .where(
+                    SurveyNotification.id.in_(notification_ids),
+                    SurveyNotification.progress_status.in_(
+                        ["not_started", "in_progress"]
+                    ),
+                )
+                .values(
+                    progress_status="closed",
+                    closed_at=now_utc,
+                )
+            )
+
+            closed_count = result.rowcount or 0
+            session.commit()
+
+    except Exception:
+        session.rollback()
+        logger.exception(
+            "Ошибка закрытия просроченных прохождений"
+        )
+        raise
+
+    finally:
+        session.close()
+
+    if closed_count:
+        logger.info(
+            "Закрыто просроченных прохождений: %s",
+            closed_count,
+        )
+
+    # В безопасном режиме на этом заканчиваем.
+    # Сообщения MAX останутся в очереди на редактирование.
+    if bot is None:
+        return closed_count
+
+    edited_count = 0
+
+    for notification in notifications:
+        notification_id = notification["id"]
+        progress_status = notification["progress_status"]
+        message_id = notification["max_message_id"]
+
+        # Редактируем только сообщения незавершённых прохождений.
+        # Также повторно обрабатываем ранее закрытые прохождения,
+        # у которых ещё сохранился max_message_id.
+        if progress_status not in ("in_progress", "closed"):
+            continue
+
+        if not message_id:
+            continue
+
+        try:
+            await bot.edit_message(
+                message_id=str(message_id),
+                text="Опрос окончен, спасибо за ответы",
+                attachments=[],
+            )
+
+        except Exception:
+            logger.exception(
+                "Не удалось закрыть сообщение MAX. "
+                "Notification ID: %s, message ID: %s. "
+                "Редактирование будет повторено.",
+                notification_id,
+                message_id,
+            )
+            continue
+
+        # Удаляем ID только после успешного редактирования.
+        # Проверка message_id защищает от очистки нового сообщения,
+        # если оно было сохранено параллельно.
+        cleanup_session = SessionLocal()
+
+        try:
+            cleanup_session.execute(
+                update(SurveyNotification)
+                .where(
+                    SurveyNotification.id == notification_id,
+                    SurveyNotification.progress_status == "closed",
+                    SurveyNotification.max_message_id == message_id,
+                )
+                .values(max_message_id=None)
+            )
+
+            cleanup_session.commit()
+            edited_count += 1
+
+        except Exception:
+            cleanup_session.rollback()
+            logger.exception(
+                "Не удалось очистить ID закрытого сообщения. "
+                "Notification ID: %s",
+                notification_id,
+            )
+
+        finally:
+            cleanup_session.close()
+
+    if edited_count:
+        logger.info(
+            "Успешно отредактировано сообщений MAX: %s",
+            edited_count,
+        )
+
+    return closed_count
+
+
 def recover_stale_notifications(session, now_utc: datetime) -> int:
     """
     Возвращает зависшие уведомления со статусом sending в очередь.
     Если попытки закончились, переводит их в failed.
+    Закрытые и завершённые опросы не затрагиваются.
     """
 
     stale_before = now_utc - timedelta(minutes=SENDING_TIMEOUT_MINUTES)
@@ -242,6 +518,9 @@ def recover_stale_notifications(session, now_utc: datetime) -> int:
         update(SurveyNotification)
         .where(
             SurveyNotification.status == "sending",
+            SurveyNotification.progress_status.in_(
+                ["not_started", "in_progress"]
+            ),
             SurveyNotification.attempt_count >= MAX_NOTIFICATION_ATTEMPTS,
             stale_condition,
         )
@@ -256,6 +535,9 @@ def recover_stale_notifications(session, now_utc: datetime) -> int:
         update(SurveyNotification)
         .where(
             SurveyNotification.status == "sending",
+            SurveyNotification.progress_status.in_(
+                ["not_started", "in_progress"]
+            ),
             SurveyNotification.attempt_count < MAX_NOTIFICATION_ATTEMPTS,
             stale_condition,
         )
@@ -369,6 +651,7 @@ def get_pending_notification(session, now_utc: datetime):
         )
         .where(
             SurveyNotification.status == "pending",
+            SurveyNotification.progress_status.in_(["not_started", "in_progress"]),
             SurveyNotification.attempt_count < MAX_NOTIFICATION_ATTEMPTS,
             or_(
                 SurveyNotification.last_attempt_at.is_(None),
@@ -416,10 +699,17 @@ def get_pending_notification(session, now_utc: datetime):
     notification.error = None
 
     notification_id = notification.id
+    instance_id = notification.instance_id
+    attempt_number = notification.attempt_count
 
     session.commit()
 
-    return notification_id, max_user_id
+    return (
+        notification_id,
+        max_user_id,
+        instance_id,
+        attempt_number,
+    )
 
 
 def reset_exhausted_notifications(
@@ -455,6 +745,7 @@ def reset_exhausted_notifications(
         )
         .where(
             SurveyNotification.status == "failed",
+            SurveyNotification.progress_status.in_(["not_started", "in_progress"]),
             SurveyNotification.attempt_count >= MAX_NOTIFICATION_ATTEMPTS,
             or_(
                 SurveyNotification.error.is_(None),
@@ -520,39 +811,55 @@ def reset_exhausted_notifications(
 
 def update_notification_result(
     notification_id: int,
+    attempt_number: int,
     success: bool,
     error: str | None = None,
-) -> None:
-    """Сохраняет результат попытки отправки."""
+) -> bool:
+    """Сохраняет результат только актуальной попытки отправки."""
 
     session = SessionLocal()
 
     try:
-        notification = session.get(
-            SurveyNotification,
-            notification_id,
-        )
-
-        if notification is None:
-            logger.error(
-                "Уведомление %s не найдено после отправки.",
-                notification_id,
-            )
-            return
+        values = {}
 
         if success:
-            notification.status = "sent"
-            notification.sent_at = datetime.now(timezone.utc)
-            notification.error = None
+            values.update(
+                status="sent",
+                sent_at=datetime.now(timezone.utc),
+                error=None,
+            )
         else:
-            if notification.attempt_count >= MAX_NOTIFICATION_ATTEMPTS:
-                notification.status = "failed"
-            else:
-                notification.status = "pending"
+            values.update(
+                status=(
+                    "failed"
+                    if attempt_number >= MAX_NOTIFICATION_ATTEMPTS
+                    else "pending"
+                ),
+                error=(error or "Неизвестная ошибка")[:2000],
+            )
 
-            notification.error = (error or "Неизвестная ошибка")[:2000]
+        result = session.execute(
+            update(SurveyNotification)
+            .where(
+                SurveyNotification.id == notification_id,
+                SurveyNotification.status == "sending",
+                SurveyNotification.attempt_count == attempt_number,
+            )
+            .values(**values)
+        )
 
+        updated = result.rowcount == 1
         session.commit()
+
+        if not updated:
+            logger.warning(
+                "Результат устаревшей попытки отправки проигнорирован: "
+                "notification_id=%s, attempt=%s",
+                notification_id,
+                attempt_number,
+            )
+
+        return updated
 
     except Exception:
         session.rollback()
@@ -564,6 +871,77 @@ def update_notification_result(
 
     finally:
         session.close()
+
+
+def refresh_notification_lease(
+    notification_id: int,
+    attempt_number: int,
+) -> bool:
+    """
+    Продлевает lease только для актуальной попытки отправки.
+    """
+    session = SessionLocal()
+
+    try:
+        result = session.execute(
+            update(SurveyNotification)
+            .where(
+                SurveyNotification.id == notification_id,
+                SurveyNotification.status == "sending",
+                SurveyNotification.attempt_count == attempt_number,
+            )
+            .values(
+                last_attempt_at=datetime.now(timezone.utc),
+            )
+        )
+
+        refreshed = result.rowcount == 1
+        session.commit()
+
+        return refreshed
+
+    except Exception:
+        session.rollback()
+        logger.exception(
+            "Ошибка обновления lease уведомления %s, попытка %s",
+            notification_id,
+            attempt_number,
+        )
+        raise
+
+    finally:
+        session.close()
+
+
+async def maintain_notification_lease(
+    notification_id: int,
+    attempt_number: int,
+) -> None:
+    """
+    Периодически продлевает lease активной попытки отправки.
+    Завершается, если попытка больше не владеет уведомлением.
+    """
+    while True:
+        await asyncio.sleep(NOTIFICATION_HEARTBEAT_SECONDS)
+
+        try:
+            refreshed = await asyncio.to_thread(
+                refresh_notification_lease,
+                notification_id,
+                attempt_number,
+            )
+        except Exception:
+            # Временная ошибка БД не должна останавливать heartbeat.
+            continue
+
+        if not refreshed:
+            logger.warning(
+                "Lease уведомления потерян: notification_id=%s, "
+                "attempt=%s",
+                notification_id,
+                attempt_number,
+            )
+            return
 
 
 async def process_notification_queue() -> None:
@@ -582,26 +960,100 @@ async def process_notification_queue() -> None:
         recover_stale_notifications(session, now_utc)
         reset_exhausted_notifications(session, now_utc)
 
-        if not SEND_NOTIFICATIONS:
-            pending_count = session.scalar(
-                select(func.count())
-                .select_from(SurveyNotification)
-                .join(
-                    SurveyInstance,
-                    SurveyInstance.id == SurveyNotification.instance_id,
-                )
-                .where(
-                    SurveyNotification.status == "pending",
-                    SurveyNotification.attempt_count < MAX_NOTIFICATION_ATTEMPTS,
-                    SurveyInstance.status == "open",
-                    SurveyInstance.closes_at > now_utc,
-                )
-            )
+        # Удаляем черновики и закрываем прохождения,
+        # для которых не требуется обращение к MAX API.
+        await close_expired_student_surveys(
+            bot=None,
+            now_utc=now_utc,
+        )
 
-            logger.info(
-                "Безопасный режим: ожидают отправки уведомлений — %s. "
-                "Сообщения в MAX не отправляются.",
-                pending_count or 0,
+        if not SEND_NOTIFICATIONS:
+            timezone_names = session.scalars(
+                select(School.timezone)
+                .where(School.timezone.is_not(None))
+                .distinct()
+            ).all()
+
+            valid_timezones = []
+
+            for timezone_name in timezone_names:
+                try:
+                    ZoneInfo(timezone_name)
+                    valid_timezones.append(timezone_name)
+                except (ZoneInfoNotFoundError, ValueError):
+                    logger.error(
+                        "Пропускаем школу с некорректным "
+                        "часовым поясом: %s",
+                        timezone_name,
+                    )
+
+            pending_count = 0
+
+            if valid_timezones:
+                local_now = case(
+                    (
+                        School.timezone.in_(valid_timezones),
+                        func.timezone(School.timezone, now_utc),
+                    ),
+                    else_=None,
+                )
+
+                local_date = cast(local_now, Date)
+                local_time = cast(local_now, Time)
+
+                send_window = or_(
+                    and_(
+                        local_date == SurveyInstance.survey_date,
+                        local_time >= datetime_time(18, 0),
+                        local_time < datetime_time(22, 0),
+                    ),
+                    and_(
+                        local_date
+                        == SurveyInstance.survey_date + timedelta(days=1),
+                        local_time >= datetime_time(8, 0),
+                        local_time < datetime_time(18, 0),
+                    ),
+                )
+
+                pending_count = session.scalar(
+                    select(func.count(SurveyNotification.id))
+                    .select_from(SurveyNotification)
+                    .join(
+                        SurveyInstance,
+                        SurveyInstance.id == SurveyNotification.instance_id,
+                    )
+                    .join(
+                        Class,
+                        Class.id == SurveyInstance.class_id,
+                    )
+                    .join(
+                        School,
+                        School.id == Class.school_id,
+                    )
+                    .where(
+                        SurveyNotification.status == "pending",
+                        SurveyNotification.progress_status.in_(
+                            ["not_started", "in_progress"]
+                        ),
+                        SurveyNotification.attempt_count
+                        < MAX_NOTIFICATION_ATTEMPTS,
+                        or_(
+                            SurveyNotification.last_attempt_at.is_(None),
+                            SurveyNotification.last_attempt_at
+                            <= now_utc
+                            - timedelta(minutes=RETRY_DELAY_MINUTES),
+                        ),
+                        SurveyInstance.status == "open",
+                        SurveyInstance.closes_at > now_utc,
+                        School.timezone.in_(valid_timezones),
+                        send_window,
+                    )
+                ) or 0
+
+            logger.debug(
+                "Безопасный режим: уведомлений, доступных для попытки "
+                "отправки сейчас, — %s. Сообщения в MAX не отправляются.",
+                pending_count,
             )
             return
 
@@ -618,6 +1070,15 @@ async def process_notification_queue() -> None:
     failed_count = 0
 
     try:
+        bot = create_max_bot()
+
+        # Закрываем просроченные сообщения MAX
+        # и удаляем клавиатуры активных вопросов.
+        await close_expired_student_surveys(
+            bot=bot,
+            now_utc=datetime.now(timezone.utc),
+        )
+
         for _ in range(NOTIFICATION_BATCH_SIZE):
             session = SessionLocal()
 
@@ -636,24 +1097,25 @@ async def process_notification_queue() -> None:
             if claimed is None:
                 break
 
-            notification_id, max_user_id = claimed
+            notification_id, max_user_id, instance_id, attempt_number = claimed
+
+            heartbeat_task = asyncio.create_task(
+                maintain_notification_lease(
+                    notification_id=notification_id,
+                    attempt_number=attempt_number,
+                )
+            )
 
             try:
-                if bot is None:
-                    bot = create_max_bot()
-
                 await send_notification(
                     bot=bot,
                     user_id=max_user_id,
-                    text=(
-                        "Опрос для вашего класса уже доступен. "
-                        "Откройте бота Blue Sphere и нажмите /start, "
-                        "чтобы пройти опрос."
-                    ),
+                    instance_id=instance_id,
                 )
 
                 update_notification_result(
                     notification_id=notification_id,
+                    attempt_number=attempt_number,
                     success=True,
                 )
 
@@ -675,6 +1137,7 @@ async def process_notification_queue() -> None:
                 try:
                     update_notification_result(
                         notification_id=notification_id,
+                        attempt_number=attempt_number,
                         success=False,
                         error=str(error),
                     )
@@ -683,6 +1146,14 @@ async def process_notification_queue() -> None:
                         "Не удалось обновить статус уведомления %s",
                         notification_id,
                     )
+
+            finally:
+                heartbeat_task.cancel()
+
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
 
     finally:
         if bot is not None:

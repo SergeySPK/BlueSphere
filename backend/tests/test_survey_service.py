@@ -568,7 +568,7 @@ def test_is_survey_open_at_interval_boundaries():
     # Ровно в момент закрытия.
     assert (
         survey_service._is_survey_open(instance, "Asia/Yekaterinburg", closes_at)
-        is True
+        is False
     )
 
 
@@ -1162,3 +1162,232 @@ def test_create_survey_instance_skips_at_exact_deadline(
     assert result["created"] == []
     assert len(result["skipped"]) == 1
     assert "Срок проведения" in result["skipped"][0]["reason"]
+
+
+def test_start_survey_progress_is_idempotent(
+    survey_test_data,
+    survey_service_session,
+    db_session,
+):
+    data = survey_test_data
+
+    notification = SurveyNotification(
+        instance_id=data["instance"].id,
+        student_id=data["student"].id,
+        status="pending",
+        progress_status="not_started",
+    )
+    db_session.add(notification)
+    db_session.commit()
+
+    first_result = survey_service.start_survey_progress(
+        data["max_user_id"],
+        data["instance"].id,
+    )
+
+    db_session.refresh(notification)
+
+    first_started_at = notification.started_at
+
+    assert first_result == "in_progress"
+    assert first_started_at is not None
+
+    second_result = survey_service.start_survey_progress(
+        data["max_user_id"],
+        data["instance"].id,
+    )
+
+    db_session.refresh(notification)
+
+    assert second_result == "in_progress"
+    assert notification.progress_status == "in_progress"
+    assert notification.started_at == first_started_at
+
+
+def test_save_survey_question_message_id_for_closed_survey(
+    survey_test_data,
+    survey_service_session,
+    db_session,
+):
+    data = survey_test_data
+
+    notification = SurveyNotification(
+        instance_id=data["instance"].id,
+        student_id=data["student"].id,
+        status="sent",
+        progress_status="closed",
+        max_message_id=None,
+    )
+    db_session.add(notification)
+    db_session.commit()
+
+    result = survey_service.save_survey_question_message_id(
+        data["max_user_id"],
+        data["instance"].id,
+        "late-question-message",
+    )
+
+    db_session.refresh(notification)
+
+    assert result is True
+    assert notification.progress_status == "closed"
+    assert notification.max_message_id == "late-question-message"
+
+
+def test_complete_survey_progress_is_idempotent(
+    survey_test_data,
+    survey_service_session,
+    db_session,
+):
+    data = survey_test_data
+
+    notification = SurveyNotification(
+        instance_id=data["instance"].id,
+        student_id=data["student"].id,
+        status="sent",
+        progress_status="in_progress",
+    )
+    db_session.add(notification)
+    db_session.commit()
+
+    first_result = survey_service.complete_survey_progress(
+        data["max_user_id"],
+        data["instance"].id,
+    )
+
+    db_session.refresh(notification)
+
+    first_completed_at = notification.completed_at
+
+    assert first_result is True
+    assert notification.progress_status == "completed"
+    assert first_completed_at is not None
+
+    second_result = survey_service.complete_survey_progress(
+        data["max_user_id"],
+        data["instance"].id,
+    )
+
+    db_session.refresh(notification)
+
+    assert second_result is True
+    assert notification.progress_status == "completed"
+    assert notification.completed_at == first_completed_at
+
+
+def test_complete_survey_progress_does_not_reopen_closed_survey(
+    survey_test_data,
+    survey_service_session,
+    db_session,
+):
+    data = survey_test_data
+
+    notification = SurveyNotification(
+        instance_id=data["instance"].id,
+        student_id=data["student"].id,
+        status="sent",
+        progress_status="closed",
+    )
+    db_session.add(notification)
+    db_session.commit()
+
+    result = survey_service.complete_survey_progress(
+        data["max_user_id"],
+        data["instance"].id,
+    )
+
+    db_session.refresh(notification)
+
+    assert result is False
+    assert notification.progress_status == "closed"
+    assert notification.completed_at is None
+
+
+def test_effective_survey_status_is_closed_at_exact_deadline():
+    opens_at = datetime(
+        2026, 11, 3, 13, 0,
+        tzinfo=timezone.utc,
+    )
+    closes_at = datetime(
+        2026, 11, 4, 13, 0,
+        tzinfo=timezone.utc,
+    )
+
+    instance = SimpleNamespace(
+        status="open",
+        opens_at=opens_at,
+        closes_at=closes_at,
+    )
+
+    result = survey_service.get_effective_survey_status(
+        instance,
+        "Asia/Yekaterinburg",
+        now=closes_at,
+    )
+
+    assert result == "closed"
+
+
+def test_process_survey_callback_multiple_selection(
+    survey_test_data,
+    survey_service_session,
+    db_session,
+):
+    data = survey_test_data
+
+    # Сначала отвечаем на первый вопрос, чтобы второй стал текущим.
+    _submit_first_question(data)
+
+    # Создаём уведомление, необходимое для обработки callback.
+    notification = SurveyNotification(
+        instance_id=data["instance"].id,
+        student_id=data["student"].id,
+        status="sent",
+        progress_status="in_progress",
+        max_message_id="test-question-message",
+    )
+    db_session.add(notification)
+    db_session.flush()
+
+    question = data["questions"][1]
+
+    options = survey_service.get_question_options(question.id)
+    options_by_title = {
+        option["title"]: option["id"]
+        for option in options
+    }
+
+    actions = [
+        "История",
+        "Математика",
+        "История",
+    ]
+
+    expected_selections = [
+        {options_by_title["История"]},
+        {
+            options_by_title["История"],
+            options_by_title["Математика"],
+        },
+        {options_by_title["Математика"]},
+    ]
+
+    for step, title in enumerate(actions):
+        option_id = options_by_title[title]
+
+        result = survey_service.process_survey_callback(
+            data["max_user_id"],
+            "survey_toggle",
+            question.id,
+            option_id,
+        )
+
+        selected_ids = result.get("selected_ids", [])
+
+        assert set(selected_ids) == expected_selections[step], (
+            f"Неверный выбор после нажатия {title!r}: "
+            f"ожидалось {expected_selections[step]}, "
+            f"получено {set(selected_ids)}"
+        )
+
+        assert result["status"] == "saved"
