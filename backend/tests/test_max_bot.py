@@ -568,7 +568,7 @@ def test_start_handler_rejects_unregistered_user(
     asyncio.run(max_bot_module.start_handler(event))
 
     assert messages == [
-        "Вы ещё не зарегистрированы в Blue Sphere. "
+        "Вы ещё не зарегистрированы в Планировщике учебной нагрузки. "
         "Обратитесь к администратору школы."
     ]
 
@@ -583,19 +583,22 @@ def test_start_handler_shows_teacher_greeting(
         max_bot_module,
         "get_user_profile",
         lambda user_id: {
-            "full_name": "Тестовый учитель",
+            "full_name": "Иванов Иван Иванович",
             "roles": ["teacher"],
         },
     )
 
     async def fake_answer(text, **kwargs):
-        messages.append(text)
+        messages.append({
+            "text": text,
+            "format": kwargs.get("format"),
+        })
 
     event = SimpleNamespace(
         message=SimpleNamespace(
             sender=SimpleNamespace(
                 user_id=12345,
-                first_name="Учитель",
+                first_name="Иван",
             ),
             answer=fake_answer,
         )
@@ -603,10 +606,11 @@ def test_start_handler_shows_teacher_greeting(
 
     asyncio.run(max_bot_module.start_handler(event))
 
-    assert messages == [
-        "Здравствуйте! Вы учитель.\n"
-        "Управление нагрузкой доступно в приложении Blue Sphere."
-    ]
+    assert len(messages) == 1
+    assert "Здравствуйте, Иван Иванович!" in messages[0]["text"]
+    assert "Планировщик учебной нагрузки" in messages[0]["text"]
+    assert "рекомендации ИИ" in messages[0]["text"]
+    assert messages[0]["format"] == "markdown"
 
 
 def test_start_handler_shows_admin_greeting(
@@ -619,19 +623,22 @@ def test_start_handler_shows_admin_greeting(
         max_bot_module,
         "get_user_profile",
         lambda user_id: {
-            "full_name": "Тестовый администратор",
+            "full_name": "Петров Пётр Петрович",
             "roles": ["admin"],
         },
     )
 
     async def fake_answer(text, **kwargs):
-        messages.append(text)
+        messages.append({
+            "text": text,
+            "format": kwargs.get("format"),
+        })
 
     event = SimpleNamespace(
         message=SimpleNamespace(
             sender=SimpleNamespace(
                 user_id=12345,
-                first_name="Администратор",
+                first_name="Пётр",
             ),
             answer=fake_answer,
         )
@@ -639,7 +646,11 @@ def test_start_handler_shows_admin_greeting(
 
     asyncio.run(max_bot_module.start_handler(event))
 
-    assert messages == ["Здравствуйте! Вы администратор Blue Sphere.\nУправление нагрузкой и классами доступно в приложении Blue Sphere."]
+    assert len(messages) == 1
+    assert "Здравствуйте, Пётр Петрович!" in messages[0]["text"]
+    assert "общешкольную аналитику" in messages[0]["text"]
+    assert "всем классам школы" in messages[0]["text"]
+    assert messages[0]["format"] == "markdown"
 
 
 def test_start_handler_handles_user_without_role(
@@ -688,7 +699,7 @@ def test_start_handler_shows_student_without_available_survey(
         max_bot_module,
         "get_user_profile",
         lambda user_id: {
-            "full_name": "Тестовый ученик",
+            "full_name": "Иванов Иван Иванович",
             "roles": ["student"],
         },
     )
@@ -700,13 +711,16 @@ def test_start_handler_shows_student_without_available_survey(
     )
 
     async def fake_answer(text, **kwargs):
-        messages.append(text)
+        messages.append({
+            "text": text,
+            "format": kwargs.get("format"),
+        })
 
     event = SimpleNamespace(
         message=SimpleNamespace(
             sender=SimpleNamespace(
                 user_id=12345,
-                first_name="Сергей",
+                first_name="Иван",
             ),
             answer=fake_answer,
         )
@@ -714,12 +728,56 @@ def test_start_handler_shows_student_without_available_survey(
 
     asyncio.run(max_bot_module.start_handler(event))
 
-    assert messages == [
-        "Привет, Тестовый ученик!\n" "Сейчас для тебя нет доступных опросов."
-    ]
+    assert len(messages) == 1
+    assert "Привет, Иван!" in messages[0]["text"]
+    assert "Планировщик учебной нагрузки" in messages[0]["text"]
+    assert "анонимных опросов" in messages[0]["text"]
+    assert messages[0]["format"] == "markdown"
 
 
-def test_start_handler_sends_first_question_only_once(
+@pytest.mark.parametrize(
+    ("full_name", "fallback_name", "expected"),
+    [
+        (
+            "Иванов Иван Иванович",
+            "MAX",
+            ("Иван", "Иванович"),
+        ),
+        (
+            "Иванов Иван",
+            "MAX",
+            ("Иван", None),
+        ),
+        (
+            "Иванов",
+            "MAX",
+            ("MAX", None),
+        ),
+        (
+            None,
+            "MAX",
+            ("MAX", None),
+        ),
+        (
+            None,
+            None,
+            ("друг", None),
+        ),
+    ],
+)
+def test_get_greeting_name(
+    max_bot_module,
+    full_name,
+    fallback_name,
+    expected,
+):
+    assert max_bot_module.get_greeting_name(
+        full_name,
+        fallback_name,
+    ) == expected
+
+
+def test_start_handler_restores_question_on_repeated_start(
     db_session,
     survey_test_data,
     survey_service_session,
@@ -761,6 +819,146 @@ def test_start_handler_sends_first_question_only_once(
     )
 
     sent_messages = []
+    message_counter = 0
+
+    async def fake_answer(text, **kwargs):
+        nonlocal message_counter
+        message_counter += 1
+
+        sent_messages.append({
+            "text": text,
+            "attachments": kwargs.get("attachments"),
+            "format": kwargs.get("format"),
+        })
+
+        return SimpleNamespace(
+            message=SimpleNamespace(
+                body=SimpleNamespace(
+                    mid=f"test-max-message-{message_counter}",
+                ),
+            )
+        )
+
+    event = SimpleNamespace(
+        message=SimpleNamespace(
+            sender=SimpleNamespace(
+                user_id=data["max_user_id"],
+                first_name="Иван",
+            ),
+            answer=fake_answer,
+        )
+    )
+
+    # Первый /start.
+    asyncio.run(max_bot_module.start_handler(event))
+
+    db_session.refresh(notification)
+
+    assert notification.progress_status == "in_progress"
+    assert notification.started_at is not None
+    assert notification.max_message_id == "test-max-message-2"
+
+    assert len(sent_messages) == 2
+
+    # Первое сообщение — приветствие.
+    assert "Планировщик учебной нагрузки" in sent_messages[0]["text"]
+    assert sent_messages[0]["format"] == "markdown"
+    assert sent_messages[0]["attachments"] is None
+
+    # Второе сообщение — первый вопрос.
+    assert sent_messages[1]["text"] == "Общая оценка состояния"
+    assert sent_messages[1]["attachments"]
+
+    # Повторный /start.
+    asyncio.run(max_bot_module.start_handler(event))
+
+    db_session.refresh(notification)
+
+    # Снова приветствие и актуальный незавершённый вопрос.
+    assert len(sent_messages) == 4
+
+    assert "Планировщик учебной нагрузки" in sent_messages[2]["text"]
+    assert sent_messages[3]["text"] == "Общая оценка состояния"
+    assert sent_messages[3]["attachments"]
+
+    # Прогресс не сброшен, ID сообщения обновлён.
+    assert notification.progress_status == "in_progress"
+    assert notification.max_message_id == "test-max-message-4"
+
+
+def test_start_handler_restores_multiple_answer_draft(
+    db_session,
+    survey_test_data,
+    survey_service_session,
+    max_bot_module,
+    monkeypatch,
+):
+    data = survey_test_data
+
+    notification = SurveyNotification(
+        instance_id=data["instance"].id,
+        student_id=data["student"].id,
+        status="sent",
+        progress_status="in_progress",
+    )
+    db_session.add(notification)
+
+    first_question = data["questions"][0]
+
+    first_response = SurveyResponse(
+        instance_question_id=first_question.id,
+        student_id=data["student"].id,
+        status="submitted",
+    )
+
+    db_session.add(first_response)
+
+    question = data["questions"][1]
+    selected_options = data["options"][1][:2]
+
+    draft = SurveyResponse(
+        instance_question_id=question.id,
+        student_id=data["student"].id,
+        status="draft",
+    )
+    db_session.add(draft)
+    db_session.flush()
+
+    for option in selected_options:
+        db_session.add(
+            SurveyResponseOption(
+                response_id=draft.id,
+                option_id=option.id,
+                instance_question_id=question.id,
+            )
+        )
+
+    db_session.commit()
+
+    class FakeCallbackButton:
+        def __init__(self, text, payload):
+            self.text = text
+            self.payload = payload
+
+    class FakeButtonsPayload:
+        def __init__(self, buttons):
+            self.buttons = buttons
+
+        def pack(self):
+            return self
+
+    monkeypatch.setattr(
+        max_bot_module,
+        "CallbackButton",
+        FakeCallbackButton,
+    )
+    monkeypatch.setattr(
+        max_bot_module,
+        "ButtonsPayload",
+        FakeButtonsPayload,
+    )
+
+    sent_messages = []
 
     async def fake_answer(text, **kwargs):
         sent_messages.append({
@@ -770,7 +968,7 @@ def test_start_handler_sends_first_question_only_once(
 
         return SimpleNamespace(
             message=SimpleNamespace(
-                body=SimpleNamespace(mid="test-max-message-100"),
+                body=SimpleNamespace(mid="draft-test-message"),
             )
         )
 
@@ -778,37 +976,130 @@ def test_start_handler_sends_first_question_only_once(
         message=SimpleNamespace(
             sender=SimpleNamespace(
                 user_id=data["max_user_id"],
-                first_name="Ученик",
+                first_name="Иван",
             ),
             answer=fake_answer,
         )
     )
 
-    # Первый запуск.
     asyncio.run(max_bot_module.start_handler(event))
 
-    db_session.refresh(notification)
+    assert len(sent_messages) == 2
 
-    assert notification.progress_status == "in_progress"
-    assert notification.started_at is not None
-    assert notification.max_message_id == "test-max-message-100"
+    # Бот восстановил именно второй вопрос.
+    assert sent_messages[1]["text"] == question.bot_text
 
-    assert len(sent_messages) == 1
-    assert sent_messages[0]["text"] == (
-        "Привет, Тестовый ученик!\n\n"
-        "Общая оценка состояния"
+    keyboard = sent_messages[1]["attachments"][0]
+
+    # Два сохранённых варианта снова отмечены.
+    assert keyboard.buttons[0][0].text.startswith("☑")
+    assert keyboard.buttons[1][0].text.startswith("☑")
+
+    # Остальные варианты не должны быть отмечены.
+    assert keyboard.buttons[2][0].text.startswith("☐")
+
+    # Payload кнопок должен соответствовать исходным вариантам.
+    assert keyboard.buttons[0][0].payload == (
+        f"survey_toggle:{question.id}:{data['options'][1][0].id}"
     )
-    assert sent_messages[0]["attachments"]
+    assert keyboard.buttons[1][0].payload == (
+        f"survey_toggle:{question.id}:{data['options'][1][1].id}"
+    )
 
-    # Повторный запуск не должен отправлять второй вопрос.
-    asyncio.run(max_bot_module.start_handler(event))
+    # Кнопка подтверждения должна относиться к этому вопросу.
+    assert keyboard.buttons[-1][0].payload == f"survey_done:{question.id}"
 
-    assert len(sent_messages) == 1
+    # Кнопка подтверждения тоже присутствует.
+    assert keyboard.buttons[-1][0].text == "Готово"
 
     db_session.refresh(notification)
 
     assert notification.progress_status == "in_progress"
-    assert notification.max_message_id == "test-max-message-100"
+    assert notification.max_message_id == "draft-test-message"
+
+
+def test_start_handler_opens_next_unanswered_question(
+    db_session,
+    survey_test_data,
+    survey_service_session,
+    max_bot_module,
+    monkeypatch,
+):
+    from datetime import datetime, timezone
+
+    data = survey_test_data
+
+    notification = SurveyNotification(
+        instance_id=data["instance"].id,
+        student_id=data["student"].id,
+        status="sent",
+        progress_status="in_progress",
+    )
+    db_session.add(notification)
+
+    first_question = data["questions"][0]
+
+    submitted_response = SurveyResponse(
+        instance_question_id=first_question.id,
+        student_id=data["student"].id,
+        status="submitted",
+        submitted_at=datetime.now(timezone.utc),
+    )
+    db_session.add(submitted_response)
+    db_session.commit()
+
+    class FakeCallbackButton:
+        def __init__(self, text, payload):
+            self.text = text
+            self.payload = payload
+
+    class FakeButtonsPayload:
+        def __init__(self, buttons):
+            self.buttons = buttons
+
+        def pack(self):
+            return self
+
+    monkeypatch.setattr(
+        max_bot_module,
+        "CallbackButton",
+        FakeCallbackButton,
+    )
+    monkeypatch.setattr(
+        max_bot_module,
+        "ButtonsPayload",
+        FakeButtonsPayload,
+    )
+
+    sent_messages = []
+
+    async def fake_answer(text, **kwargs):
+        sent_messages.append({
+            "text": text,
+            "attachments": kwargs.get("attachments"),
+        })
+
+        return SimpleNamespace(
+            message=SimpleNamespace(
+                body=SimpleNamespace(mid="next-question-message"),
+            )
+        )
+
+    event = SimpleNamespace(
+        message=SimpleNamespace(
+            sender=SimpleNamespace(
+                user_id=data["max_user_id"],
+                first_name="Иван",
+            ),
+            answer=fake_answer,
+        )
+    )
+
+    asyncio.run(max_bot_module.start_handler(event))
+
+    assert len(sent_messages) == 2
+    assert sent_messages[1]["text"] == data["questions"][1].bot_text
+    assert sent_messages[1]["attachments"]
 
 
 def test_callback_handler_completes_full_survey(
@@ -993,7 +1284,7 @@ def test_callback_handler_completes_full_survey(
         "Время прохождения этого опроса завершилось."
     ]
 
-    # Повторный /start после завершения не отправляет новое сообщение.
+    # Повторный /start после завершения сообщает, что ученик уже ответил на все вопросы.
     start_messages = []
 
     async def fake_start_answer(text, **kwargs):
@@ -1011,7 +1302,15 @@ def test_callback_handler_completes_full_survey(
 
     asyncio.run(max_bot_module.start_handler(start_event))
 
-    assert start_messages == []
+    assert len(start_messages) == 2
+
+    assert "Привет" in start_messages[0]
+    assert "Планировщик учебной нагрузки" in start_messages[0]
+
+    assert (
+        start_messages[1]
+        == "Ты уже ответил на все вопросы этого опроса. Спасибо! 💙"
+    )
 
     db_session.refresh(notification)
 
