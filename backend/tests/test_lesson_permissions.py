@@ -1,5 +1,4 @@
 from datetime import date, datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -7,16 +6,11 @@ from sqlalchemy import select
 
 import main
 from models import (
-    AcademicYear,
     Administrator,
-    Class,
     EditingSession,
-    School,
     Schedule,
     Student,
     StudentEnrollment,
-    Subject,
-    Teacher,
     TeachingAssignment,
     User,
 )
