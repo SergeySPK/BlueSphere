@@ -7,14 +7,17 @@ from sqlalchemy import select
 import main
 from models import (
     Administrator,
+    Class,
     EditingSession,
     Schedule,
+    School,
     Student,
     StudentEnrollment,
+    Subject,
+    Teacher,
     TeachingAssignment,
     User,
 )
-
 
 TEST_DATE = date(2026, 11, 4)
 TEST_DATE_STR = TEST_DATE.isoformat()
@@ -356,8 +359,6 @@ def test_administrator_cannot_edit_another_school_lesson(
     db_session.flush()
 
     # Администратор принадлежит другой школе.
-    from models import School
-
     another_school = School(
         region="Другой регион",
         city="Другой город",
@@ -565,8 +566,6 @@ def test_teacher_cannot_edit_lesson_from_another_school(
     """Учитель не может редактировать урок другой школы."""
     data = teacher_transfer_data
     user = get_teacher_user(db_session, data["old_teacher"])
-
-    from models import School, AcademicYear, Class, Subject, Teacher
 
     another_school = School(
         region="Другой регион",
