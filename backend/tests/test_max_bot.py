@@ -609,7 +609,7 @@ def test_start_handler_shows_teacher_greeting(
     assert len(messages) == 1
     assert "Здравствуйте, Иван Иванович!" in messages[0]["text"]
     assert "Планировщик учебной нагрузки" in messages[0]["text"]
-    assert "рекомендации ИИ" in messages[0]["text"]
+    assert "Получать рекомендации" in messages[0]["text"]
     assert messages[0]["format"] == "markdown"
 
 
@@ -648,8 +648,8 @@ def test_start_handler_shows_admin_greeting(
 
     assert len(messages) == 1
     assert "Здравствуйте, Пётр Петрович!" in messages[0]["text"]
-    assert "общешкольную аналитику" in messages[0]["text"]
-    assert "всем классам школы" in messages[0]["text"]
+    assert "управления учебной нагрузкой" in messages[0]["text"]
+    assert "всем классам Вашей школы" in messages[0]["text"]
     assert messages[0]["format"] == "markdown"
 
 
@@ -731,7 +731,7 @@ def test_start_handler_shows_student_without_available_survey(
     assert len(messages) == 1
     assert "Привет, Иван!" in messages[0]["text"]
     assert "Планировщик учебной нагрузки" in messages[0]["text"]
-    assert "анонимных опросов" in messages[0]["text"]
+    assert "Опрос анонимный" in messages[0]["text"]
     assert messages[0]["format"] == "markdown"
 
 
