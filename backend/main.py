@@ -37,7 +37,7 @@ from models import (
 )
 
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Dict, Optional
+from typing import List, Dict, Literal, Optional
 
 import hashlib
 import jwt
@@ -571,9 +571,59 @@ class ClassStatus(BaseModel):
     has_data: bool = Field(alias="hasData")
 
 
+class RecommendationPeriod(BaseModel):
+    start: PythonDate
+    end: PythonDate
+
+
+class RecommendationDailyLoad(BaseModel):
+    date: PythonDate
+    day: int
+    level: int = Field(ge=0, le=4)
+    source: Literal["ai", "python"]
+
+
+class RecommendationDetail(BaseModel):
+    date: PythonDate
+    kind: Literal["class", "teacher", "lesson"]
+    priority: Literal["low", "normal", "high", "critical"]
+    title: str
+    recommendationText: str
+    rationale: Optional[str] = None
+    teacherId: Optional[int] = None
+    scheduleId: Optional[int] = None
+
+
 class Recommendation(BaseModel):
+    # Старые поля. Сохраняем для совместимости с текущим Flutter.
     daysToReduce: List[int]
     daysToMoveTo: List[int]
+
+    # Состояние AI-анализа.
+    analysisStatus: Literal[
+        "not_started",
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+    ] = "not_started"
+
+    # True, если возвращаются предыдущие результаты,
+    # пока новый анализ выполняется или завершился ошибкой.
+    isStale: bool = False
+
+    # Период последнего AI-анализа. Пока анализа нет — null.
+    period: Optional[RecommendationPeriod] = None
+
+    # Заполняются после появления сохранённых AI-результатов.
+    dailyLoads: List[RecommendationDailyLoad] = Field(default_factory=list)
+    recommendations: List[RecommendationDetail] = Field(
+        default_factory=list
+    )
+
+    # Источник старых списков дней.
+    # Сейчас это расписание, а не AI.
+    dataSource: Literal["schedule", "ai"] = "schedule"
 
 
 class UserProfile(BaseModel):
@@ -615,6 +665,9 @@ class Lesson(BaseModel):
     lesson_type: str
     subgroup: int = 0
     updated_by: Optional[str] = None  # ФИО того, кто менял
+    is_editable: bool = False
+    is_editing: bool = False
+    editor_name: Optional[str] = None
 
 
 class LessonUpdateRequest(BaseModel):
@@ -1498,6 +1551,7 @@ def build_class_schedule(
     school_class: Class,
     date: str,
     db: Session,
+    user: User,
 ) -> List[Lesson]:
     """Формирует расписание класса на указанную дату."""
 
@@ -1510,6 +1564,8 @@ def build_class_schedule(
         )
 
     Editor = aliased(User)
+    EditingEditor = aliased(User)
+    now = datetime.now(timezone.utc)
 
     rows = db.execute(
         select(
@@ -1518,6 +1574,8 @@ def build_class_schedule(
             Subject.name,
             User.full_name,
             Editor.full_name,
+            EditingSession.id,
+            EditingEditor.full_name,
         )
         .join(
             TeachingAssignment,
@@ -1538,6 +1596,15 @@ def build_class_schedule(
         .outerjoin(
             Editor,
             Schedule.updated_by_user_id == Editor.id,
+        )
+        .outerjoin(
+            EditingSession,
+            (EditingSession.schedule_id == Schedule.id)
+            & (EditingSession.expires_at > now),
+        )
+        .outerjoin(
+            EditingEditor,
+            EditingSession.user_id == EditingEditor.id,
         )
         .where(
             TeachingAssignment.class_id == school_class.id,
@@ -1561,6 +1628,9 @@ def build_class_schedule(
             updated_by=(
                 format_teacher_name(editor_full_name) if editor_full_name else None
             ),
+            is_editable=can_edit_lesson(schedule, user, db),
+            is_editing=editing_session_id is not None,
+            editor_name=editing_editor_full_name,
         )
         for (
             schedule,
@@ -1568,6 +1638,8 @@ def build_class_schedule(
             subject_name,
             teacher_full_name,
             editor_full_name,
+            editing_session_id,
+            editing_editor_full_name,
         ) in rows
     ]
 
@@ -1592,7 +1664,7 @@ def get_school_schedule(
         db=db,
     )
 
-    return build_class_schedule(school_class, date, db)
+    return build_class_schedule(school_class, date, db, current_user)
 
 
 EDITING_SESSION_TTL_SECONDS = 60
@@ -1621,6 +1693,7 @@ def can_edit_lesson(
             Teacher.user_id == user.id,
             Teacher.school_id == Class.school_id,
             TeachingAssignment.academic_year_id == Class.academic_year_id,
+            TeachingAssignment.school_id == Class.school_id,
         )
     )
 
@@ -1902,7 +1975,13 @@ def stop_editing(
         .with_for_update()
     )
 
-    if session is not None and session.user_id == user.id:
+    if session is not None:
+        if session.user_id != user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Нельзя завершить чужую сессию редактирования.",
+            )
+
         db.delete(session)
         db.commit()
 

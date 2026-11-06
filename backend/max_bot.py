@@ -196,8 +196,12 @@ def build_multiple_keyboard(question_id: int, options: list, selected_ids: list)
 
 
 async def send_callback_message(event, text: str):
-    """Подтверждает callback и отправляет отдельное сообщение."""
-    await event.ack()
+    """Подтверждает callback и отправляет отдельное сообщение в чат."""
+
+    await event.ack(
+        notification="Ответ не отправлен."
+    )
+
     await event.bot.send_message(
         user_id=event.callback.user.user_id,
         text=text,
@@ -222,9 +226,127 @@ async def edit_callback_message(event, text: str, keyboard=None):
     )
 
 
+def get_greeting_name(
+    full_name: str | None,
+    fallback_name: str | None = None,
+) -> tuple[str, str | None]:
+    """Извлекает имя и отчество из ФИО формата «Фамилия Имя Отчество»."""
+
+    parts = (full_name or "").split()
+
+    if len(parts) >= 2:
+        first_name = parts[1]
+    elif fallback_name:
+        first_name = fallback_name
+    elif parts:
+        first_name = parts[0]
+    else:
+        first_name = "друг"
+
+    patronymic = parts[2] if len(parts) >= 3 else None
+
+    return first_name, patronymic
+
+
+def build_role_greeting(
+    role: str,
+    full_name: str | None,
+    fallback_name: str | None = None,
+) -> str | None:
+    """Формирует приветствие в зависимости от роли пользователя."""
+
+    first_name, patronymic = get_greeting_name(
+        full_name,
+        fallback_name,
+    )
+
+    if role == "student":
+        return (
+            f"Привет, {first_name}! 👋\n\n"
+            "Добро пожаловать в Планировщик учебной нагрузки — систему, "
+            "которая помогает сделать учебную нагрузку комфортнее "
+            "и заботится о самочувствии учеников.\n\n"
+            "Здесь ты можешь:\n"
+            "📋 Поделиться информацией о твоём состоянии после учебного дня "
+            "благодаря анонимным опросам\n"
+            "📊 Следить за планом грядущих работ и учебной нагрузкой.\n\n"
+            "**Как пользоваться опросами:**\n"
+            "• Выбирай подходящие варианты ответа.\n"
+            "• Если в вопросе несколько вариантов, можешь отметить несколько "
+            "и нажать «Готово».\n"
+            "• Если прервёшь опрос, твои сохранённые ответы останутся – "
+            "ты сможешь продолжить с того места, где остановился.\n\n"
+            "**Как пользоваться мини-приложением:**\n"
+            "• Открой мини-приложение (синяя кнопка рядом с полем для ввода).\n"
+            "• Перейди во вкладку «Нагрузка», чтобы посмотреть, когда у тебя "
+            "ближайшая плановая проверочная, контрольная или иная работа.\n"
+            "• Нажми на вкладку «Опросы», чтобы удостовериться, что не только "
+            "тебе было сложно сегодня. \n\n"
+            "Твои ответы помогают оценивать общую ситуацию в классе. "
+            "Опрос анонимный, так что никто не узнает твой ответ."
+        )
+
+    display_name = (
+        f"{first_name} {patronymic}"
+        if patronymic
+        else first_name
+    )
+
+    if role == "teacher":
+        return (
+            f"Здравствуйте, {display_name}! 👋\n\n"
+            "Добро пожаловать в Планировщик учебной нагрузки — систему "
+            "мониторинга учебной нагрузки и эмоционального состояния учеников.\n\n"
+            "С помощью платформы Вы можете:\n\n"
+            "📊 **Получить обратную связь благодаря анонимным опросам** — "
+            "узнавать, какие предметы вызывают наибольшую нагрузку "
+            "или тревожность у учеников.\n\n"
+            "📅 **Работать с расписанием работ** — просматривать и редактировать "
+            "расписание грядущих работ в своих классах.\n\n"
+            "💡 **Получать рекомендации** — находить возможности для более "
+            "равномерного распределения учебной нагрузки.\n\n"
+            "**Как пользоваться:**\n"
+            "• Откройте мини-приложение (синяя кнопка рядом с полем для ввода).\n"
+            "• Используйте результаты опросов для выявления проблемных мест "
+            "в учебном процессе.\n"
+            "• Добавляйте и редактируйте план работ (проверочные, контрольные, "
+            "зачеты, экзамены, и т.д.).\n"
+            "• Учитывайте полезные рекомендации от ИИ при планировании работ.\n\n"
+            "Доступ к статистике предоставляется только по классам, "
+            "в которых Вы ведёте занятия.\n\n"
+            "Желаем продуктивной работы! 💙"
+        )
+
+    if role == "admin":
+        return (
+            f"Здравствуйте, {display_name}! 👋\n\n"
+            "Добро пожаловать в Планировщик учебной нагрузки — единую систему "
+            "управления учебной нагрузкой и мониторинга состояния учеников "
+            "Вашей школы.\n\n"
+            "Как администратор, Вы получаете доступ к основным возможностям "
+            "платформы:\n\n"
+            "🏫 **Управление школой** — работа с классами и учебной структурой.\n\n"
+            "📅 **Контроль расписания** — просмотр и редактирование плана работы.\n\n"
+            "📊 **Общеклассная аналитика** — изучение результатов опросов "
+            "и распределения учебной нагрузки по классам.\n\n"
+            "💡 **Рекомендации** — выявление потенциальных проблем "
+            "и возможностей для оптимизации учебного процесса.\n\n"
+            "**Как пользоваться:**\n"
+            "• Откройте мини-приложение (синяя кнопка рядом с полем для ввода).\n"
+            "• Следите за результатами опросов и общей динамикой учебной нагрузки.\n"
+            "• Анализируйте данные по классам, чтобы своевременно выявлять "
+            "проблемные ситуации.\n\n"
+            "Вам доступна статистика по всем классам Вашей школы. "
+            "При этом ответы учеников не раскрываются.\n\n"
+            "Спасибо за участие в развитии комфортной образовательной среды! 💙"
+        )
+
+    return None
+
+
 @dp.message_created(CommandStart())
 async def start_handler(event: MessageCreated):
-    """Обрабатывает команду /start."""
+    """Обрабатывает /start и восстанавливает незавершённый опрос."""
 
     sender = event.message.sender
 
@@ -238,45 +360,60 @@ async def start_handler(event: MessageCreated):
 
     if profile is None:
         await event.message.answer(
-            "Вы ещё не зарегистрированы в Blue Sphere. "
+            "Вы ещё не зарегистрированы в Планировщике учебной нагрузки. "
             "Обратитесь к администратору школы."
         )
         return
 
     roles = profile["roles"]
 
+    # Сохраняем существующий приоритет ролей:
+    # учитель → ученик → администратор.
+
     # Учитель
     if "teacher" in roles:
+        greeting = build_role_greeting(
+            "teacher",
+            profile.get("full_name"),
+            sender.first_name,
+        )
+
         await event.message.answer(
-            "Здравствуйте! Вы учитель.\n"
-            "Управление нагрузкой доступно в приложении Blue Sphere."
+            greeting,
+            format="markdown",
         )
         return
 
     # Ученик
     if "student" in roles:
-        name = profile["full_name"] or sender.first_name
+        greeting = build_role_greeting(
+            "student",
+            profile.get("full_name"),
+            sender.first_name,
+        )
+
+        # Приветствие отправляется отдельно от вопроса.
+        await event.message.answer(
+            greeting,
+            format="markdown",
+        )
 
         survey = get_available_survey(sender.user_id)
 
         if survey is None:
-            await event.message.answer(
-                f"Привет, {name}!\n"
-                "Сейчас для тебя нет доступных опросов."
-            )
             return
 
         instance_id = survey["instance_id"]
 
-        # Проверяем, не проходил ли ученик этот опрос ранее.
         progress = get_survey_progress(
             sender.user_id,
             instance_id,
         )
 
         if progress == "completed":
-            # Не отправляем повторное сообщение:
-            # сообщение об успешном завершении должно остаться неизменным.
+            await event.message.answer(
+                "Ты уже ответил на все вопросы этого опроса. Спасибо! 💙"
+            )
             return
 
         if progress == "closed":
@@ -285,31 +422,44 @@ async def start_handler(event: MessageCreated):
             )
             return
 
-        if progress == "in_progress":
-            # Ученик уже начал опрос.
-            # Повторный /start не должен создавать дубликат вопроса.
-            return
-
-        # Начинаем прохождение только при первом запуске.
-        progress = start_survey_progress(
-            sender.user_id,
-            instance_id,
-        )
-
         if progress is None:
             logger.error(
-                "Не удалось начать опрос: отсутствует запись уведомления. "
+                "Не найдена запись прохождения опроса. "
                 "MAX user_id: %s, instance_id: %s",
                 sender.user_id,
                 instance_id,
             )
 
             await event.message.answer(
-                "Не удалось начать опрос. Попробуйте позже."
+                "Не удалось открыть опрос. Попробуй позже."
+            )
+            return
+
+        # Начинаем опрос только при первом запуске.
+        # При повторном /start состояние и черновики не сбрасываются.
+        if progress == "not_started":
+            progress = start_survey_progress(
+                sender.user_id,
+                instance_id,
+            )
+
+        if progress is None:
+            logger.error(
+                "Не удалось начать опрос. "
+                "MAX user_id: %s, instance_id: %s",
+                sender.user_id,
+                instance_id,
+            )
+
+            await event.message.answer(
+                "Не удалось начать опрос. Попробуй позже."
             )
             return
 
         if progress == "completed":
+            await event.message.answer(
+                "Ты уже ответил на все вопросы этого опроса. Спасибо! 💙"
+            )
             return
 
         if progress == "closed":
@@ -318,24 +468,64 @@ async def start_handler(event: MessageCreated):
             )
             return
 
+        if progress != "in_progress":
+            logger.error(
+                "Неизвестное состояние прохождения опроса: %s. "
+                "MAX user_id: %s, instance_id: %s",
+                progress,
+                sender.user_id,
+                instance_id,
+            )
+
+            await event.message.answer(
+                "Не удалось определить состояние опроса. Попробуй позже."
+            )
+            return
+
+        # Получаем первый незавершённый вопрос.
+        # Если у вопроса есть черновик, он тоже будет возвращён.
         question = get_next_question(
             sender.user_id,
             instance_id,
         )
 
         if question is None:
-            complete_survey_progress(
+            # Проверяем, не закрылся ли опрос между запросами.
+            if get_available_survey(sender.user_id) is None:
+                await event.message.answer(
+                    "Время прохождения этого опроса завершилось."
+                )
+                return
+
+            completed = complete_survey_progress(
                 sender.user_id,
                 instance_id,
             )
+
+            if not completed:
+                logger.error(
+                    "Не удалось завершить прохождение опроса. "
+                    "MAX user_id: %s, instance_id: %s",
+                    sender.user_id,
+                    instance_id,
+                )
+
+                await event.message.answer(
+                    "Не удалось зафиксировать завершение опроса. "
+                    "Попробуй позже."
+                )
+                return
+
             await event.message.answer(
-                f"Привет, {name}!\n"
-                "Ты уже ответил на все вопросы этого опроса. Спасибо!"
+                "Ты уже ответил на все вопросы этого опроса. Спасибо! 💙"
             )
             return
 
-        options = get_question_options(question["question_id"])
+        options = get_question_options(
+            question["question_id"],
+        )
 
+        # Формируем клавиатуру.
         if question["answer_type"] == "multiple":
             selected_ids = get_selected_options(
                 sender.user_id,
@@ -364,14 +554,13 @@ async def start_handler(event: MessageCreated):
                 ]
             ).pack()
 
-        # Отправляем первый вопрос.
+        # Вопрос отправляется отдельным сообщением.
         sent_message = await event.message.answer(
-            f"Привет, {name}!\n\n{question['bot_text']}",
+            question["bot_text"],
             attachments=[keyboard],
         )
 
-        # Сохраняем ID сообщения, чтобы впоследствии
-        # планировщик мог отредактировать его при закрытии опроса.
+        # Сохраняем ID последнего сообщения с вопросом.
         try:
             message_id = sent_message.message.body.mid
 
@@ -401,9 +590,15 @@ async def start_handler(event: MessageCreated):
 
     # Администратор
     if "admin" in roles:
+        greeting = build_role_greeting(
+            "admin",
+            profile.get("full_name"),
+            sender.first_name,
+        )
+
         await event.message.answer(
-            "Здравствуйте! Вы администратор Blue Sphere.\n"
-            "Управление нагрузкой и классами доступно в приложении Blue Sphere."
+            greeting,
+            format="markdown",
         )
         return
 
@@ -483,7 +678,7 @@ async def callback_handler(event: MessageCallback):
     if status == "incomplete":
         await send_callback_message(
             event,
-            "Сначала выбери хотя бы один вариант.",
+            "Пожалуйста, выберите хотя бы один вариант ответа.",
         )
         return
 

@@ -1391,3 +1391,23 @@ def test_process_survey_callback_multiple_selection(
         )
 
         assert result["status"] == "saved"
+
+
+def test_process_survey_callback_rejects_missing_notification(
+    survey_test_data,
+    survey_service_session,
+):
+    data = survey_test_data
+
+    # Уведомление для ученика намеренно не создаём.
+    result = survey_service.process_survey_callback(
+        max_user_id=data["max_user_id"],
+        action="survey",
+        question_id=data["questions"][0].id,
+        option_id=data["options"][0][0].id,
+    )
+
+    assert result == {
+        "status": "closed",
+        "instance_id": data["instance"].id,
+    }

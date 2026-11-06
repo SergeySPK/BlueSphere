@@ -343,6 +343,160 @@ def get_next_question(max_user_id: int, instance_id: int, *, db=None):
             db.close()
 
 
+def get_next_question_payload(
+    student_id: int,
+    instance_id: int,
+    *,
+    db,
+):
+    """
+    Одним запросом получает первый незавершённый вопрос,
+    его варианты и выбранные учеником варианты черновика.
+    """
+
+    # Проверяем, что ученик был зачислен в класс на дату опроса.
+    enrollment_count = (
+        select(func.count(StudentEnrollment.id))
+        .where(
+            StudentEnrollment.student_id == student_id,
+            StudentEnrollment.class_id == SurveyInstance.class_id,
+            StudentEnrollment.start_date <= SurveyInstance.survey_date,
+            (
+                StudentEnrollment.end_date.is_(None)
+                | (StudentEnrollment.end_date >= SurveyInstance.survey_date)
+            ),
+        )
+        .correlate(SurveyInstance)
+        .scalar_subquery()
+    )
+
+    # Находим ID первого незавершённого вопроса.
+    first_question_id = (
+        select(SurveyInstanceQuestion.id)
+        .select_from(SurveyInstance)
+        .join(
+            SurveyInstanceQuestion,
+            SurveyInstanceQuestion.instance_id == SurveyInstance.id,
+        )
+        .outerjoin(
+            SurveyResponse,
+            and_(
+                SurveyResponse.instance_question_id == SurveyInstanceQuestion.id,
+                SurveyResponse.student_id == student_id,
+            ),
+        )
+        .where(
+            SurveyInstance.id == instance_id,
+            SurveyInstance.status == "open",
+            enrollment_count == 1,
+            (
+                SurveyResponse.id.is_(None)
+                | (SurveyResponse.status == "draft")
+            ),
+        )
+        .order_by(SurveyInstanceQuestion.sort_order)
+        .limit(1)
+        .scalar_subquery()
+    )
+
+    # Проверяем, выбран ли конкретный вариант в черновике.
+    is_selected = (
+        select(SurveyResponseOption.id)
+        .where(
+            SurveyResponseOption.response_id == SurveyResponse.id,
+            SurveyResponseOption.option_id == SurveyInstanceOption.id,
+            SurveyResponseOption.instance_question_id
+            == SurveyInstanceQuestion.id,
+        )
+        .exists()
+    )
+
+    rows = db.execute(
+        select(
+            SurveyInstance.opens_at,
+            SurveyInstance.closes_at,
+            School.timezone.label("school_timezone"),
+            SurveyInstanceQuestion.id.label("question_id"),
+            SurveyInstanceQuestion.title,
+            SurveyInstanceQuestion.bot_text,
+            SurveyInstanceQuestion.answer_type,
+            SurveyInstanceQuestion.min_answer,
+            SurveyInstanceQuestion.max_answer,
+            SurveyInstanceOption.id.label("option_id"),
+            SurveyInstanceOption.title.label("option_title"),
+            SurveyInstanceOption.is_exclusive,
+            is_selected.label("is_selected"),
+        )
+        .select_from(SurveyInstanceQuestion)
+        .join(
+            SurveyInstance,
+            SurveyInstance.id == SurveyInstanceQuestion.instance_id,
+        )
+        .join(Class, Class.id == SurveyInstance.class_id)
+        .join(School, School.id == Class.school_id)
+        .outerjoin(
+            SurveyResponse,
+            and_(
+                SurveyResponse.instance_question_id == SurveyInstanceQuestion.id,
+                SurveyResponse.student_id == student_id,
+                SurveyResponse.status == "draft",
+            ),
+        )
+        .outerjoin(
+            SurveyInstanceOption,
+            SurveyInstanceOption.instance_question_id
+            == SurveyInstanceQuestion.id,
+        )
+        .where(SurveyInstanceQuestion.id == first_question_id)
+        .order_by(SurveyInstanceOption.sort_order)
+    ).all()
+
+    if not rows:
+        return None
+
+    first_row = rows[0]
+
+    if not _is_survey_open(first_row, first_row.school_timezone):
+        return None
+
+    options = []
+    selected_ids = []
+
+    for row in rows:
+        if row.option_id is None:
+            continue
+
+        options.append({
+            "id": row.option_id,
+            "title": row.option_title,
+            "is_exclusive": row.is_exclusive,
+        })
+
+        if row.is_selected:
+            selected_ids.append(row.option_id)
+
+    question = {
+        "student_id": student_id,
+        "instance_id": instance_id,
+        "question_id": first_row.question_id,
+        "title": first_row.title,
+        "bot_text": first_row.bot_text,
+        "answer_type": first_row.answer_type,
+        "min_answer": first_row.min_answer,
+        "max_answer": first_row.max_answer,
+    }
+
+    return {
+        "question": question,
+        "options": options,
+        "selected_ids": (
+            selected_ids
+            if first_row.answer_type == "multiple"
+            else []
+        ),
+    }
+
+
 def get_question_options(question_id: int, *, db=None):
     """Получает варианты ответа для вопроса опроса."""
 
@@ -535,16 +689,23 @@ def save_single_answer(
 
             student_id, instance = context
 
+            # Одним запросом проверяем существующий ответ
+            # и блокируем его от параллельного изменения.
             existing_response = db.scalar(
-                select(SurveyResponse.id).where(
+                select(SurveyResponse)
+                .where(
                     SurveyResponse.instance_question_id == question_id,
                     SurveyResponse.student_id == student_id,
-                    SurveyResponse.status == "submitted",
                 )
+                .with_for_update()
             )
 
             if existing_response is not None:
-                return "already_submitted"
+                if existing_response.status == "submitted":
+                    return "already_submitted"
+
+                # Для single-choice черновик не предусмотрен.
+                return "invalid"
 
             # Находим первый незавершённый вопрос.
             first_question = _get_first_unfinished_question(
@@ -555,21 +716,7 @@ def save_single_answer(
 
             # Проверяем, что ученик отвечает именно на него.
             if first_question is None:
-                existing = db.scalar(
-                    select(SurveyResponse.id)
-                    .join(
-                        SurveyInstanceQuestion,
-                        SurveyInstanceQuestion.id
-                        == SurveyResponse.instance_question_id,
-                    )
-                    .where(
-                        SurveyInstanceQuestion.id == question_id,
-                        SurveyResponse.student_id == student_id,
-                        SurveyResponse.status == "submitted",
-                    )
-                )
-
-                return "already_submitted" if existing is not None else "invalid"
+                return "invalid"
 
             if first_question.id != question_id:
                 return "invalid"
@@ -592,23 +739,6 @@ def save_single_answer(
             )
 
             if option is None:
-                return "invalid"
-
-            # Дополнительная проверка на существующий ответ.
-            existing_response = db.scalar(
-                select(SurveyResponse)
-                .where(
-                    SurveyResponse.instance_question_id == question.id,
-                    SurveyResponse.student_id == student_id,
-                )
-                .with_for_update()
-            )
-
-            if existing_response is not None:
-                if existing_response.status == "submitted":
-                    return "already_submitted"
-
-                # Для single-choice черновик не предусмотрен.
                 return "invalid"
 
             # Создаём сразу завершённый ответ.
@@ -1014,16 +1144,18 @@ def submit_multiple_answer(
 
             student_id, instance = context
 
-            # Сначала проверяем, не был ли этот вопрос уже отправлен.
-            existing_response = db.scalar(
-                select(SurveyResponse.id).where(
+            # Загружаем ответ и блокируем его от параллельного изменения.
+            # Одновременно проверяем, не был ли он уже отправлен.
+            response = db.scalar(
+                select(SurveyResponse)
+                .where(
                     SurveyResponse.instance_question_id == question_id,
                     SurveyResponse.student_id == student_id,
-                    SurveyResponse.status == "submitted",
                 )
+                .with_for_update()
             )
 
-            if existing_response is not None:
+            if response is not None and response.status == "submitted":
                 return "already_submitted"
 
             # Находим первый незавершённый вопрос.
@@ -1048,21 +1180,9 @@ def submit_multiple_answer(
             if question.min_answer < 1 or question.max_answer < question.min_answer:
                 return "invalid"
 
-            # Находим черновик и блокируем его.
-            response = db.scalar(
-                select(SurveyResponse)
-                .where(
-                    SurveyResponse.instance_question_id == question.id,
-                    SurveyResponse.student_id == student_id,
-                )
-                .with_for_update()
-            )
-
+            # Используем уже загруженный и заблокированный ответ.
             if response is None:
                 return "incomplete"
-
-            if response.status == "submitted":
-                return "already_submitted"
 
             if response.status != "draft":
                 return "invalid"
@@ -1095,6 +1215,10 @@ def submit_multiple_answer(
             # Завершаем ответ.
             response.status = "submitted"
             response.submitted_at = datetime.now(timezone.utc)
+
+            # Сохраняем изменения в рамках текущей транзакции,
+            # чтобы следующие SELECT увидели статус submitted.
+            db.flush()
 
         return "submitted"
 
@@ -1368,7 +1492,7 @@ def process_survey_callback(
                 else None
             )
 
-            if progress in ("closed", "completed", "not_started"):
+            if progress != "in_progress":
                 return {
                     "status": "closed",
                     "instance_id": instance_id,
@@ -1466,24 +1590,16 @@ def process_survey_callback(
             else:
                 return {"status": "invalid"}
 
-            # 6. Получаем следующий вопрос.
-            question = get_next_question(
-                max_user_id,
-                instance_id,
+            # 6. Получаем следующий вопрос, варианты и выбранные ответы одним SQL-запросом.
+            payload = get_next_question_payload(
+                student_id=survey["student_id"],
+                instance_id=instance_id,
                 db=db,
             )
 
             # 7. Если вопросов больше нет — завершаем опрос.
-            if question is None:
+            if payload is None:
                 completed = False
-
-                notification = _get_student_survey_notification(
-                    db,
-                    max_user_id,
-                    instance_id,
-                    student_id=survey["student_id"],
-                    lock=True,
-                )
 
                 if (
                     notification is not None
@@ -1503,27 +1619,12 @@ def process_survey_callback(
                     "message": message,
                 }
 
-            # 8. Загружаем варианты следующего вопроса.
-            options = get_question_options(
-                question["question_id"],
-                db=db,
-            )
-
-            selected_ids = []
-
-            if question["answer_type"] == "multiple":
-                selected_ids = get_selected_options(
-                    max_user_id,
-                    question["question_id"],
-                    db=db,
-                )
-
             return {
                 "status": "submitted",
                 "instance_id": instance_id,
-                "question": question,
-                "options": options,
-                "selected_ids": selected_ids,
+                "question": payload["question"],
+                "options": payload["options"],
+                "selected_ids": payload["selected_ids"],
                 "completed": False,
                 "message": message,
             }

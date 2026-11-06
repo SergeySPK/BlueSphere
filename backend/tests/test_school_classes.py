@@ -157,8 +157,8 @@ def test_school_schedule_uses_school_and_class_access(monkeypatch):
         access_calls.append((school_id, class_code))
         return school_class
 
-    def fake_build_schedule(school_class_arg, date, db):
-        schedule_calls.append((school_class_arg, date))
+    def fake_build_schedule(school_class_arg, date, db, user_arg):
+        schedule_calls.append((school_class_arg, date, user_arg))
         return ["расписание"]
 
     monkeypatch.setattr(
@@ -184,7 +184,7 @@ def test_school_schedule_uses_school_and_class_access(monkeypatch):
 
     assert result == ["расписание"]
     assert access_calls == [(1, "1a")]
-    assert schedule_calls == [(school_class, "2026-10-30")]
+    assert schedule_calls == [(school_class, "2026-10-30", user)]
 
 
 def test_school_schedule_denies_access_without_building_schedule(monkeypatch):
