@@ -299,11 +299,9 @@ async def send_survey_invitation_and_question(
         state["student_id"],
     )
 
-    name = state["full_name"] or "ученик"
-
     sent_message = await bot.send_message(
         user_id=max_user_id,
-        text=f"Привет, {name}!\n\n{question['bot_text']}",
+        text=f"{question['bot_text']}",
         attachments=[keyboard],
     )
 
