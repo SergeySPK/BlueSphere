@@ -462,6 +462,68 @@ def test_schedule_returns_is_editable_for_each_lesson(
     assert editable_by_id[other_subgroup_schedule.id] is False
 
 
+def test_schedule_returns_active_editing_session(
+    db_session,
+    teacher_transfer_data,
+):
+    """Расписание показывает активный статус и ФИО редактора."""
+    data = teacher_transfer_data
+    viewer = get_teacher_user(db_session, data["old_teacher"])
+    editor = get_teacher_user(db_session, data["other_teacher"])
+
+    db_session.add(
+        EditingSession(
+            schedule_id=data["schedule"].id,
+            user_id=editor.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=30),
+        )
+    )
+    db_session.flush()
+
+    result = main.get_school_schedule(
+        school_id=data["school"].id,
+        class_code=data["class_5a"].code,
+        date=TEST_DATE_STR,
+        current_user=viewer,
+        db=db_session,
+    )
+
+    lesson = next(item for item in result if int(item.id) == data["schedule"].id)
+    assert lesson.is_editing is True
+    assert lesson.editor_name == editor.full_name
+
+
+def test_schedule_ignores_expired_editing_session(
+    db_session,
+    teacher_transfer_data,
+):
+    """Истёкшая сессия не должна помечать урок занятым."""
+    data = teacher_transfer_data
+    viewer = get_teacher_user(db_session, data["old_teacher"])
+    editor = get_teacher_user(db_session, data["other_teacher"])
+
+    db_session.add(
+        EditingSession(
+            schedule_id=data["schedule"].id,
+            user_id=editor.id,
+            expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        )
+    )
+    db_session.flush()
+
+    result = main.get_school_schedule(
+        school_id=data["school"].id,
+        class_code=data["class_5a"].code,
+        date=TEST_DATE_STR,
+        current_user=viewer,
+        db=db_session,
+    )
+
+    lesson = next(item for item in result if int(item.id) == data["schedule"].id)
+    assert lesson.is_editing is False
+    assert lesson.editor_name is None
+
+
 def test_administrator_schedule_has_all_lessons_editable(
     db_session,
     teacher_transfer_data,
