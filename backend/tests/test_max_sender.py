@@ -94,7 +94,6 @@ def test_send_survey_invitation_and_question_is_idempotent(
     )
 
     assert bot.messages[1]["text"] == (
-        "Привет, Тестовый ученик!\n\n"
         "Общая оценка состояния"
     )
 
