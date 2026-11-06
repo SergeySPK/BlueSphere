@@ -1,15 +1,30 @@
-// Модель данных для одного урока в расписании
+// Модель для получения уроков
 class Lesson {
-  final String id; // Уникальный идентификатор урока
-  final int lessonNumber; // Порядковый номер урока в расписании
-  final String subjectName; // Название предмета
-  final String teacherName; // ФИО преподавателя, ведущего урок
-  final String room; // Номер кабинета
-  final String lessonType; // Тип занятия
-  final int subgroup; // Номер подгруппы
-  final String? updatedBy; // ID того, кто последним изменил тип урока
+  final String id;
+  final int lessonNumber;
+  final String subjectName;
+  final String teacherName;
+  final String room;
+  final String lessonType;
+  final int subgroup;
+  final String? updatedBy;
+  final bool isEditable;
+  final bool isEditing;
+  final String? editorName;
 
-  Lesson({required this.id, required this.lessonNumber, required this.subjectName, required this.teacherName, required this.room, required this.lessonType, required this.subgroup, this.updatedBy});
+  Lesson({
+    required this.id,
+    required this.lessonNumber,
+    required this.subjectName,
+    required this.teacherName,
+    required this.room,
+    required this.lessonType,
+    required this.subgroup,
+    this.updatedBy,
+    this.isEditable = false,
+    this.isEditing = false,
+    this.editorName,
+  });
 
   factory Lesson.fromJson(Map<String, dynamic> json) {
     return Lesson(
@@ -21,6 +36,9 @@ class Lesson {
       lessonType: json['lesson_type'] as String,
       subgroup: json['subgroup'] as int,
       updatedBy: json['updated_by'] as String?,
+      isEditable: json['is_editable'] as bool? ?? false,
+      isEditing: json['is_editing'] as bool? ?? false,
+      editorName: json['editor_name'] as String?,
     );
   }
 }

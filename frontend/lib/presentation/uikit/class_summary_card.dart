@@ -57,7 +57,7 @@ class ClassSummaryCard extends StatelessWidget {
                     SizedBox(height: 5.fh),
                     Text(
                       statusText,
-                      style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: .w700, color: loadMax),
+                      style: TextStyle(fontFamily: 'Inter', fontSize: 16.fh, fontWeight: .w700, color: loadMax),
                     ),
                     SizedBox(height: 2.fh),
                     Text(

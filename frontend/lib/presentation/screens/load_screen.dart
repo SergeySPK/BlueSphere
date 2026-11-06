@@ -148,7 +148,10 @@ class _LoadScreenState extends State<LoadScreen> {
       backgroundColor: background,
       body: Column(
         children: [
-          CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс'),
+          GestureDetector(
+            onTap: widget.onGoToClasses,
+            child: CustomHeader(title: isClassSelected ? 'Класс ${widget.className}' : 'Выберите класс'),
+          ),
           Expanded(child: _buildBody()),
         ],
       ),
@@ -187,7 +190,17 @@ class _LoadScreenState extends State<LoadScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => DayDetailsScreen(day: day, monthName: currentMonth, isTeacher: widget.isTeacher, monthNumber: currentMonthNumber, className: widget.className, classId: widget.classId, dayLevel: dayData.level),
+                  builder: (context) => DayDetailsScreen(
+                    day: day,
+                    monthName: currentMonth,
+                    isTeacher: widget.isTeacher,
+                    monthNumber: currentMonthNumber,
+                    className: widget.className,
+                    classId: widget.classId,
+                    dayLevel: dayData.level,
+                    onGoToClasses: widget.onGoToClasses,
+                    onGoToSummary: widget.onGoToSummary,
+                  ),
                 ),
               );
             },

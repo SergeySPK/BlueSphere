@@ -34,7 +34,7 @@ class CustomHeader extends StatelessWidget {
           else
             SizedBox(width: 30.fw, height: 30.fh),
           Container(
-            padding: ps(h: 26.fw, v: 6.fh),
+            padding: ps(h: 16.fw, v: 6.fh),
             decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
             child: Text(
               title,

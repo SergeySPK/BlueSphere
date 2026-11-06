@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
+// Кастомный баннер с уровнем нагрузки
 class StatusBanner extends StatelessWidget {
   final int level;
   final String date;
@@ -63,7 +64,7 @@ class StatusBanner extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.transparent,
               shape: BoxShape.circle,
-              border: Border.all(color: cardColor, width: 8),
+              border: Border.all(color: cardColor, width: 4.fw),
             ),
             child: Center(
               child: Icon(icon, color: cardColor, size: 50.fh),
@@ -75,7 +76,7 @@ class StatusBanner extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'итоги опроса состояния учащихся на $date',
+                  'общая оценка состояния учащихся на $date',
                   style: TextStyle(fontFamily: 'Inter', fontSize: 8.fh, fontWeight: .w400, color: text),
                 ),
                 SizedBox(height: 4.fh),

@@ -39,28 +39,37 @@ class LoadCalendar extends StatelessWidget {
 
     List<Widget> gridCells = [];
 
-    for (int i = 1; i < firstDayWeekday; i++) {
+    int offset;
+    int currentWeekday;
+
+    if (firstDayWeekday == 7) {
+      offset = 0;
+      currentWeekday = 1;
+    } else {
+      offset = firstDayWeekday - 1;
+      currentWeekday = firstDayWeekday;
+    }
+
+    for (int i = 0; i < offset; i++) {
       gridCells.add(_buildEmptyStartCell());
     }
 
-    int currentWeekday = firstDayWeekday;
-
     for (int day = 1; day <= daysInMonth; day++) {
+      if (day == 1 && firstDayWeekday == 7) continue;
       final dayData = loadDays.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: 4, isEditing: false));
       final bool isToday = (date.year == now.year) && (date.month == now.month) && (day == now.day);
 
-      final bool isSunday = currentWeekday == 7;
-
-      gridCells.add(_buildDayCell(dayData, isToday, isSunday));
-
-      if (isSunday) {
+      if (currentWeekday != 7) {
+        gridCells.add(_buildDayCell(dayData, isToday, false));
+      }
+      if (currentWeekday == 7) {
         currentWeekday = 1;
       } else {
         currentWeekday++;
       }
     }
 
-    while (gridCells.length % 7 != 0) {
+    while (gridCells.length % 6 != 0) {
       gridCells.add(_buildEmptyStartCell());
     }
 
@@ -112,14 +121,14 @@ class LoadCalendar extends StatelessWidget {
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 7, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 1),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 6, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 1),
             itemCount: gridCells.length,
             itemBuilder: (context, index) {
               return gridCells[index];
             },
           ),
           SizedBox(height: 8.fh),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [_buildWeekDay('пн'), _buildWeekDay('вт'), _buildWeekDay('ср'), _buildWeekDay('чт'), _buildWeekDay('пт'), _buildWeekDay('сб'), _buildWeekDay('вс')]),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [_buildWeekDay('пн'), _buildWeekDay('вт'), _buildWeekDay('ср'), _buildWeekDay('чт'), _buildWeekDay('пт'), _buildWeekDay('сб')]),
         ],
       ),
     );
@@ -178,27 +187,6 @@ class LoadCalendar extends StatelessWidget {
         if (onDayTap != null) onDayTap!(dayData.day);
       },
       child: cell,
-    );
-  }
-
-  Widget _buildSundayCell(int day, bool isToday) {
-    return GestureDetector(
-      onTap: () {
-        if (onDayTap != null) onDayTap!(day);
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: emptyCell,
-          borderRadius: BorderRadius.circular(5.r),
-          border: isToday ? Border.all(color: currentDayBorder, width: 3.fw) : null,
-        ),
-        child: Center(
-          child: Text(
-            '$day',
-            style: TextStyle(fontFamily: 'Inter', fontSize: 12.fh, fontWeight: .w400, color: text),
-          ),
-        ),
-      ),
     );
   }
 

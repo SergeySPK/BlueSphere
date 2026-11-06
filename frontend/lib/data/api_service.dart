@@ -11,6 +11,14 @@ class ApiService {
   static String? _token;
   static int? _schoolId;
 
+  static void setTestSchoolId(int id) {
+    _schoolId = id;
+  }
+
+  static void setTestToken(String token) {
+    _token = token;
+  }
+
   // Авторизация
   static Future<Map<String, dynamic>?> auth(String initData) async {
     try {

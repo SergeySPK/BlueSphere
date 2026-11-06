@@ -92,7 +92,7 @@ class _SurveysScreenState extends State<SurveysScreen> {
           _isLoading = false;
         });
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       int code = 500;
       final errorString = e.toString();
       if (errorString.contains('Exception: ')) {
@@ -142,6 +142,13 @@ class _SurveysScreenState extends State<SurveysScreen> {
     return top.percentage > 0 ? top.label : 'Нет ответов';
   }
 
+  String _getGeneralStatus() {
+    if (_generalResults.isEmpty) return 'НЕТ ДАННЫХ';
+    final top = _generalResults.reduce((a, b) => a.percentage > b.percentage ? a : b);
+    if (top.percentage == 0) return 'НЕТ ДАННЫХ';
+    return top.label.toUpperCase();
+  }
+
   int _getTopPercentage(List<SurveyResultItem> items) {
     if (items.isEmpty) return 0;
     return items.reduce((a, b) => a.percentage > b.percentage ? a : b).percentage;
@@ -166,7 +173,10 @@ class _SurveysScreenState extends State<SurveysScreen> {
       backgroundColor: background,
       body: Column(
         children: [
-          CustomHeader(title: isClassSelected ? widget.className : 'Выберите класс'),
+          GestureDetector(
+            onTap: widget.onGoToClasses,
+            child: CustomHeader(title: isClassSelected ? 'Класс ${widget.className}' : 'Выберите класс'),
+          ),
           Expanded(
             child: _errorCode != null
                 ? ErrorScreen(code: _errorCode!)
@@ -189,7 +199,7 @@ class _SurveysScreenState extends State<SurveysScreen> {
                         ClassSummaryCard(
                           date: _formatDate(_surveyDate),
                           percentage: _getTopPercentage(_generalResults),
-                          statusText: 'СРЕДНЕЕ СОСТОЯНИЕ',
+                          statusText: _getGeneralStatus(),
                           hardestSubject: _getTopSubject(_stressSubjects),
                           easiestSubject: _getTopSubject(_easySubjects),
                         ),

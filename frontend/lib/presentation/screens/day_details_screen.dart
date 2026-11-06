@@ -19,8 +19,21 @@ class DayDetailsScreen extends StatefulWidget {
   final String classId;
   final int dayLevel;
   final bool isTeacher;
+  final VoidCallback onGoToClasses;
+  final VoidCallback onGoToSummary;
 
-  const DayDetailsScreen({super.key, required this.day, required this.monthName, required this.monthNumber, required this.className, required this.classId, required this.dayLevel, required this.isTeacher});
+  const DayDetailsScreen({
+    super.key,
+    required this.day,
+    required this.monthName,
+    required this.monthNumber,
+    required this.className,
+    required this.classId,
+    required this.dayLevel,
+    required this.isTeacher,
+    required this.onGoToClasses,
+    required this.onGoToSummary,
+  });
 
   @override
   State<DayDetailsScreen> createState() => _DayDetailsScreenState();
@@ -62,7 +75,6 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
 
   Future<void> _loadSummary() async {
     try {
-      // Запрашиваем список опросов
       final surveys = await ApiService.getClassSurveys(widget.classId);
       String dateToFetch = '';
 
@@ -73,7 +85,6 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
         dateToFetch = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       }
 
-      // Запрашиваем summary на эту дату
       final summary = await ApiService.getSummary(widget.classId, dateToFetch);
 
       if (mounted) {
@@ -90,19 +101,16 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
   Color? _randomEditColor;
 
   Future<void> _editLesson(Lesson lesson) async {
-    try {
-      await ApiService.startEditing(widget.classId, lesson.id);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Не удалось начать редактирование. Возможно, урок уже редактирует другой пользователь.')));
-      }
-      return;
-    }
-
+    if (_editingLessonNumber != null) return;
     final random = Random();
     setState(() {
       _editingLessonNumber = lesson.lessonNumber;
       _randomEditColor = editColors[random.nextInt(editColors.length)];
+    });
+
+    bool isSessionStarted = false;
+    final startFuture = ApiService.startEditing(widget.classId, lesson.id).then((_) => isSessionStarted = true).catchError((e) {
+      debugPrint('Ошибка startEditing (фон): $e');
     });
 
     final TextEditingController controller = TextEditingController(text: lesson.lessonType);
@@ -149,15 +157,12 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton(
-                      onPressed: () async {
-                        try {
-                          await ApiService.stopEditing(widget.classId, lesson.id);
-                        } catch (e) {
-                          debugPrint('stopEditing error: $e');
-                        }
-                        if (!dialogContext.mounted) return;
+                      onPressed: () {
                         setState(() => _editingLessonNumber = null);
                         Navigator.pop(dialogContext);
+                        ApiService.stopEditing(widget.classId, lesson.id).catchError((e) {
+                          debugPrint('stopEditing error: $e');
+                        });
                       },
                       child: Text(
                         'Отмена',
@@ -170,6 +175,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                         final newType = controller.text.trim();
 
                         if (newType.isEmpty || newType == lesson.lessonType) {
+                          await startFuture;
                           try {
                             await ApiService.stopEditing(widget.classId, lesson.id);
                           } catch (e) {
@@ -180,6 +186,18 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                           Navigator.pop(dialogContext);
                           return;
                         }
+
+                        await startFuture;
+                        if (!isSessionStarted) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Не удалось начать редактирование. Попробуйте позже.')));
+                          }
+                          if (!dialogContext.mounted) return;
+                          setState(() => _editingLessonNumber = null);
+                          Navigator.pop(dialogContext);
+                          return;
+                        }
+
                         bool success = false;
                         try {
                           success = await ApiService.updateLesson(widget.classId, lesson.id, newType);
@@ -271,7 +289,10 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            CustomHeader(title: widget.className, showBack: true, onBack: () => Navigator.pop(context)),
+            GestureDetector(
+              onTap: widget.onGoToClasses,
+              child: CustomHeader(title: 'Класс ${widget.className}', showBack: true, onBack: () => Navigator.pop(context)),
+            ),
             Expanded(
               child: _isLoading
                   ? Center(child: CircularProgressIndicator(color: loadMax))
@@ -280,7 +301,16 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (_status != null) StatusBanner(level: (_status!.hasData && _status!.level != null) ? _status!.level! : 4, date: _displayDate, showButton: false),
+                          if (_status != null)
+                            StatusBanner(
+                              level: (_status!.hasData && _status!.level != null) ? _status!.level! : 4,
+                              date: _displayDate,
+                              showButton: true,
+                              onGoToSummary: () {
+                                Navigator.pop(context);
+                                widget.onGoToSummary();
+                              },
+                            ),
                           SizedBox(height: 11.fh),
 
                           if (_lessons != null)
@@ -288,7 +318,9 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                               day: widget.day.toString(),
                               month: widget.monthName,
                               weekday: weekdayName,
-                              lessons: _lessons!.map((l) => LessonData(number: l.lessonNumber, subject: l.subjectName, type: l.lessonType, teacherName: l.teacherName)).toList(),
+                              lessons: _lessons!
+                                  .map((l) => LessonData(number: l.lessonNumber, subject: l.subjectName, type: l.lessonType, teacherName: l.teacherName, canEdit: l.isEditable, isEditing: l.isEditing, editorName: l.editorName))
+                                  .toList(),
                               statusColor: dayColor,
                               editingLessonNumber: _editingLessonNumber,
                               editingColor: _randomEditColor ?? loadMax,

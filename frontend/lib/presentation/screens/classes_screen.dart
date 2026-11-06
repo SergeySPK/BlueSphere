@@ -37,6 +37,9 @@ class _ClassesScreenState extends State<ClassesScreen> {
 
     try {
       final data = await ApiService.getClasses();
+      data.forEach((key, value) {
+        value.sort((a, b) => a.name.compareTo(b.name));
+      });
       if (mounted) {
         setState(() {
           _classes = data;

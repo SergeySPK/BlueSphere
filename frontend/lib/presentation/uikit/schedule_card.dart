@@ -8,8 +8,11 @@ class LessonData {
   final String subject;
   final String type;
   final String teacherName;
+  final bool canEdit;
+  final bool isEditing;
+  final String? editorName;
 
-  LessonData({required this.number, required this.subject, required this.type, required this.teacherName});
+  LessonData({required this.number, required this.subject, required this.type, required this.teacherName, this.canEdit = false, required this.isEditing, this.editorName});
 }
 
 class ScheduleCard extends StatelessWidget {
@@ -27,7 +30,7 @@ class ScheduleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: pa(16),
+      padding: ps(h: 11.fw, v: 11.fh),
       decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -35,8 +38,8 @@ class ScheduleCard extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 40.fw,
-                height: 40.fh,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(5.r)),
                 child: Center(
                   child: Text(
@@ -74,7 +77,7 @@ class ScheduleCard extends StatelessWidget {
             )
           else
             ...lessons.map((lesson) {
-              final isEditing = lesson.number == editingLessonNumber;
+              final isEditing = (lesson.number == editingLessonNumber) || lesson.isEditing;
               final hColor = editingColor;
               return Padding(
                 padding: po(b: 16.fh),
@@ -120,7 +123,7 @@ class ScheduleCard extends StatelessWidget {
                           ),
                         ),
                         SizedBox(width: 12.fw),
-                        if (onEditLesson != null)
+                        if (onEditLesson != null && lesson.canEdit)
                           GestureDetector(
                             onTap: () {
                               if (onEditLesson != null) onEditLesson!(lesson);
@@ -144,7 +147,7 @@ class ScheduleCard extends StatelessWidget {
                             child: Container(
                               decoration: BoxDecoration(color: hColor),
                               child: Text(
-                                lesson.teacherName,
+                                lesson.isEditing && lesson.editorName != null ? lesson.editorName! : lesson.teacherName,
                                 style: TextStyle(fontFamily: 'SF Pro', fontSize: 8.fh, fontWeight: .w400, color: white),
                               ),
                             ),
