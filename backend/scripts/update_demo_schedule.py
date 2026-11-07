@@ -22,7 +22,7 @@ from models import (
 )
 
 SCHOOL_SHORT_NAME = "Школа № 1"
-ACADEMIC_YEAR_NAME = "2026–2027"
+ACADEMIC_YEAR_NAME = "2026-2027"
 
 LESSON_DATE = date(2026, 9, 9)
 LESSON_NUMBER = 5

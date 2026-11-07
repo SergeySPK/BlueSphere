@@ -1,46 +1,96 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bluesphere-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   api:
     build:
       context: .
       dockerfile: backend/Dockerfile.api
     container_name: bluesphere-api
-    env_file:
-      - backend/.env.demo
     environment:
-      DATABASE_URL: ${DATABASE_URL_DOCKER:?Запускайте через docker_compose.py}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      BOT_TOKEN: ${BOT_TOKEN:?BOT_TOKEN is required}
+      FRONTEND_URL: ${FRONTEND_URL:-}
+      DEMO_MODE: ${DEMO_MODE:-false}
     ports:
       - "3000:3000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+    command: sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 3000"
 
   scheduler:
     build:
       context: .
       dockerfile: backend/Dockerfile.scheduler
     container_name: bluesphere-scheduler
-    env_file:
-      - backend/.env.demo
     environment:
-      DATABASE_URL: ${DATABASE_URL_DOCKER:?Запускайте через docker_compose.py}
-      SEND_NOTIFICATIONS: "false"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      BOT_TOKEN: ${BOT_TOKEN:?BOT_TOKEN is required}
+      SEND_NOTIFICATIONS: ${SEND_NOTIFICATIONS:-true}
+      DEMO_MODE: ${DEMO_MODE:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
     restart: unless-stopped
-    profiles:
-      - scheduler
 
   bot:
     build:
       context: .
       dockerfile: backend/Dockerfile.bot
     container_name: bluesphere-bot
-    env_file:
-      - backend/.env.demo
     environment:
-      DATABASE_URL: ${DATABASE_URL_DOCKER:?Запускайте через docker_compose.py}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      BOT_TOKEN: ${BOT_TOKEN:?BOT_TOKEN is required}
+      DEMO_MODE: ${DEMO_MODE:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
     restart: unless-stopped
-    profiles:
-      - bot
+
+  ai-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.ai-worker
+    container_name: bluesphere-ai-worker
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DEMO_MODE: ${DEMO_MODE:-false}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_TOKEN: ${AI_TOKEN:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_FALLBACK_BASE_URL: ${AI_FALLBACK_BASE_URL:-}
+      AI_FALLBACK_TOKEN: ${AI_FALLBACK_TOKEN:-}
+      AI_FALLBACK_MODEL: ${AI_FALLBACK_MODEL:-}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-60}
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-4000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

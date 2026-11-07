@@ -16,7 +16,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 
@@ -663,6 +663,11 @@ class SurveyInstanceOption(Base):
         ForeignKey("survey_question_options.id", ondelete="SET NULL"),
         nullable=True,
     )
+    subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subjects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(150))
     sort_order: Mapped[int] = mapped_column(Integer)
     is_exclusive: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -761,3 +766,464 @@ class Recommendation(Base):
     recommendation_text: Mapped[str] = mapped_column(Text)
     days_to_reduce: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list)
     days_to_move_to: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list)
+
+
+class AIAnalysisRun(Base):
+    """Один запуск анализа нагрузки и обратной связи для школы или класса."""
+
+    __tablename__ = "ai_analysis_runs"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            name="uq_ai_analysis_runs_job_id",
+        ),
+        CheckConstraint(
+            "scope IN ('class', 'school')",
+            name="ck_ai_analysis_runs_scope",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            name="ck_ai_analysis_runs_status",
+        ),
+        CheckConstraint(
+            "period_end >= period_start",
+            name="ck_ai_analysis_runs_period",
+        ),
+        CheckConstraint(
+            "(scope = 'class' AND class_id IS NOT NULL) "
+            "OR (scope = 'school' AND class_id IS NULL)",
+            name="ck_ai_analysis_runs_scope_class",
+        ),
+        ForeignKeyConstraint(
+            ["school_id", "academic_year_id"],
+            ["academic_years.school_id", "academic_years.id"],
+            name="fk_ai_analysis_runs_school_year",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["class_id", "school_id", "academic_year_id"],
+            ["classes.id", "classes.school_id", "classes.academic_year_id"],
+            name="fk_ai_analysis_runs_class_school_year",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_ai_analysis_runs_school_period",
+            "school_id",
+            "period_start",
+            "period_end",
+        ),
+        Index(
+            "ix_ai_analysis_runs_class_created",
+            "class_id",
+            "created_at",
+        ),
+        Index(
+            "ix_ai_analysis_runs_status_created",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_analysis_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    job: Mapped["AIAnalysisJob"] = relationship(
+        "AIAnalysisJob",
+        back_populates="analysis_run",
+    )
+
+    school_id: Mapped[int] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    academic_year_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    class_id: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    scope: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="queued",
+        server_default="queued",
+    )
+
+    period_start: Mapped[PythonDate] = mapped_column(Date)
+    period_end: Mapped[PythonDate] = mapped_column(Date)
+
+    input_hash: Mapped[str] = mapped_column(String(64))
+
+    prompt_version: Mapped[str] = mapped_column(String(30))
+    schema_version: Mapped[str] = mapped_column(String(30))
+
+    provider: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+    model: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    error_code: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class AIDailyLoad(Base):
+    """Результат оценки нагрузки класса на конкретный день."""
+
+    __tablename__ = "ai_daily_loads"
+
+    __table_args__ = (
+        CheckConstraint(
+            "level BETWEEN 0 AND 4",
+            name="ck_ai_daily_loads_level",
+        ),
+        UniqueConstraint(
+            "analysis_run_id",
+            "class_id",
+            "date",
+            name="uq_ai_daily_loads_run_class_date",
+        ),
+        Index(
+            "ix_ai_daily_loads_class_date",
+            "class_id",
+            "date",
+        ),
+        Index(
+            "ix_ai_daily_loads_run",
+            "analysis_run_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    analysis_run_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    class_id: Mapped[int] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    date: Mapped[PythonDate] = mapped_column(Date)
+    level: Mapped[int] = mapped_column(Integer)
+
+    source: Mapped[str] = mapped_column(
+        String(30),
+        default="ai",
+        server_default="ai",
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class AIDailyForecast(Base):
+    """
+    Актуальный прогноз нагрузки класса на конкретную дату.
+
+    В отличие от AIDailyLoad, эта модель хранит не историю
+    отдельных запусков, а одно текущее значение на класс и дату.
+    """
+
+    __tablename__ = "ai_daily_forecasts"
+
+    __table_args__ = (
+        CheckConstraint(
+            "level BETWEEN 0 AND 4",
+            name="ck_ai_daily_forecasts_level",
+        ),
+        CheckConstraint(
+            "source IN ('ai', 'python')",
+            name="ck_ai_daily_forecasts_source",
+        ),
+        UniqueConstraint(
+            "class_id",
+            "date",
+            name="uq_ai_daily_forecasts_class_date",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    class_id: Mapped[int] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    date: Mapped[PythonDate] = mapped_column(
+        Date,
+        nullable=False,
+    )
+
+    level: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    source: Mapped[str] = mapped_column(
+        String(20),
+        default="ai",
+        server_default="ai",
+        nullable=False,
+    )
+
+    analysis_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_analysis_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class AIRecommendation(Base):
+    """Рекомендация для класса, учителя или конкретного урока."""
+
+    __tablename__ = "ai_recommendations"
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('class', 'teacher', 'lesson')",
+            name="ck_ai_recommendations_kind",
+        ),
+        CheckConstraint(
+            "priority IN ('low', 'normal', 'high', 'critical')",
+            name="ck_ai_recommendations_priority",
+        ),
+        Index(
+            "ix_ai_recommendations_class_date",
+            "class_id",
+            "date",
+        ),
+        Index(
+            "ix_ai_recommendations_teacher_date",
+            "teacher_id",
+            "date",
+        ),
+        Index(
+            "ix_ai_recommendations_run",
+            "analysis_run_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    analysis_run_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    class_id: Mapped[int] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    teacher_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teachers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    schedule_id: Mapped[int | None] = mapped_column(
+        ForeignKey("schedule.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    date: Mapped[PythonDate] = mapped_column(Date)
+
+    kind: Mapped[str] = mapped_column(String(20))
+    priority: Mapped[str] = mapped_column(
+        String(20),
+        default="normal",
+        server_default="normal",
+    )
+
+    title: Mapped[str] = mapped_column(String(200))
+    recommendation_text: Mapped[str] = mapped_column(Text)
+
+    rationale: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class AIAnalysisJob(Base):
+    """Очередь фоновых задач AI-анализа."""
+
+    __tablename__ = "ai_analysis_jobs"
+
+    __table_args__ = (
+        CheckConstraint(
+            "scope IN ('class', 'school')",
+            name="ck_ai_analysis_jobs_scope",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            name="ck_ai_analysis_jobs_status",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0 AND max_attempts > 0",
+            name="ck_ai_analysis_jobs_attempts",
+        ),
+        CheckConstraint(
+            "period_end >= period_start",
+            name="ck_ai_analysis_jobs_period",
+        ),
+        CheckConstraint(
+            "(scope = 'class' AND class_id IS NOT NULL) "
+            "OR (scope = 'school' AND class_id IS NULL)",
+            name="ck_ai_analysis_jobs_scope_class",
+        ),
+        ForeignKeyConstraint(
+            ["school_id", "academic_year_id"],
+            ["academic_years.school_id", "academic_years.id"],
+            name="fk_ai_analysis_jobs_school_year",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["class_id", "school_id", "academic_year_id"],
+            ["classes.id", "classes.school_id", "classes.academic_year_id"],
+            name="fk_ai_analysis_jobs_class_school_year",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_ai_analysis_jobs_available",
+            "status",
+            "available_at",
+        ),
+        Index(
+            "ix_ai_analysis_jobs_lease",
+            "locked_until",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    school_id: Mapped[int] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    academic_year_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    class_id: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    scope: Mapped[str] = mapped_column(String(20))
+    analysis_date: Mapped[PythonDate] = mapped_column(Date)
+    period_start: Mapped[PythonDate] = mapped_column(Date)
+    period_end: Mapped[PythonDate] = mapped_column(Date)
+
+    dedupe_key: Mapped[str] = mapped_column(
+        String(160),
+        unique=True,
+    )
+    trigger: Mapped[str] = mapped_column(String(30))
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="queued",
+        server_default="queued",
+    )
+
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+    )
+    max_attempts: Mapped[int] = mapped_column(
+        Integer,
+        default=5,
+        server_default="5",
+    )
+
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    locked_by: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    last_error: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    analysis_run: Mapped["AIAnalysisRun | None"] = relationship(
+        "AIAnalysisRun",
+        back_populates="job",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )

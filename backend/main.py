@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import date as PythonDate, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import calendar
 
 from fastapi import FastAPI, Depends, HTTPException
@@ -16,6 +17,10 @@ from survey_service import get_effective_survey_status
 from models import (
     AcademicYear,
     Administrator,
+    AIAnalysisRun,
+    AIDailyForecast,
+    AIDailyLoad,
+    AIRecommendation,
     Class,
     EditingSession,
     Recommendation,
@@ -24,7 +29,6 @@ from models import (
     Student,
     StudentEnrollment,
     Subject,
-    Survey,
     SurveyInstance,
     SurveyInstanceQuestion,
     SurveyInstanceOption,
@@ -561,7 +565,7 @@ class AccessibleSchool(BaseModel):
 
 class LoadDay(BaseModel):
     day: int
-    level: int  # 0 — перегруз, 4 — пусто
+    level: Optional[int] = Field(default=None, ge=0, le=4)
     is_editing: bool = False
 
 
@@ -1043,13 +1047,42 @@ def get_load_level(lesson_count: int) -> int:
     return 4
 
 
+def get_school_local_today(
+    db: Session,
+    school_id: int,
+) -> PythonDate:
+    """Возвращает текущую дату в часовом поясе школы."""
+
+    timezone_name = db.scalar(
+        select(School.timezone).where(
+            School.id == school_id,
+        )
+    )
+
+    if not timezone_name:
+        raise HTTPException(
+            status_code=500,
+            detail="Для школы не настроен часовой пояс",
+        )
+
+    try:
+        school_timezone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise HTTPException(
+            status_code=500,
+            detail="У школы указан некорректный часовой пояс",
+        )
+
+    return datetime.now(timezone.utc).astimezone(school_timezone).date()
+
+
 def build_class_heatmap(
     school_class: Class,
     month: str,
     current_user_id: int | None,
     db: Session,
 ) -> List[LoadDay]:
-    """Формирует тепловую карту нагрузки класса за месяц."""
+    """Формирует тепловую карту из сохранённых AI-прогнозов."""
 
     try:
         month_number = int(month)
@@ -1061,12 +1094,32 @@ def build_class_heatmap(
             detail="Месяц должен быть указан числом от 01 до 12",
         )
 
-    year = PythonDate.today().year
+    school_local_today = get_school_local_today(
+        db,
+        school_class.school_id,
+    )
+
+    year = school_local_today.year
     days_in_month = calendar.monthrange(year, month_number)[1]
+
     start_date = PythonDate(year, month_number, 1)
     end_date = PythonDate(year, month_number, days_in_month)
 
-    counts = get_daily_lesson_counts(db, school_class.id, start_date, end_date)
+    forecast_rows = db.execute(
+        select(
+            AIDailyForecast.date,
+            AIDailyForecast.level,
+        ).where(
+            AIDailyForecast.class_id == school_class.id,
+            AIDailyForecast.date >= start_date,
+            AIDailyForecast.date <= end_date,
+        )
+    ).all()
+
+    forecast_levels = {
+        forecast_date: level
+        for forecast_date, level in forecast_rows
+    }
 
     now = datetime.now(timezone.utc)
 
@@ -1089,7 +1142,9 @@ def build_class_heatmap(
     )
 
     if current_user_id is not None:
-        editing_query = editing_query.where(EditingSession.user_id != current_user_id)
+        editing_query = editing_query.where(
+            EditingSession.user_id != current_user_id
+        )
 
     editing_rows = db.execute(editing_query).all()
     editing_days = {row.date.day for row in editing_rows}
@@ -1097,7 +1152,9 @@ def build_class_heatmap(
     return [
         LoadDay(
             day=day,
-            level=get_load_level(counts.get(PythonDate(year, month_number, day), 0)),
+            level=forecast_levels.get(
+                PythonDate(year, month_number, day)
+            ),
             is_editing=day in editing_days,
         )
         for day in range(1, days_in_month + 1)
@@ -1132,32 +1189,36 @@ def get_school_heatmap(
     )
 
 
-def build_class_summary(school_class: Class, db: Session) -> ClassStatus:
-    """Формирует сводку по последнему реальному опросу класса."""
+def build_class_summary(
+    school_class: Class,
+    target_date: PythonDate | None,
+    db: Session,
+) -> ClassStatus:
+    """Возвращает уровень нагрузки из канонического прогноза на дату."""
 
-    survey_result = db.execute(
-        select(
-            Survey.date,
-            func.avg(Survey.score),
+    if target_date is None:
+        target_date = get_school_local_today(
+            db,
+            school_class.school_id,
         )
-        .where(Survey.class_id == school_class.id)
-        .group_by(Survey.date)
-        .order_by(Survey.date.desc())
-        .limit(1)
-    ).first()
 
-    if survey_result is None:
+    forecast = db.scalar(
+        select(AIDailyForecast).where(
+            AIDailyForecast.class_id == school_class.id,
+            AIDailyForecast.date == target_date,
+        )
+    )
+
+    if forecast is None:
         return ClassStatus(
             level=None,
-            date=None,
+            date=target_date.strftime("%d.%m"),
             hasData=False,
         )
 
-    survey_date, average_score = survey_result
-
     return ClassStatus(
-        level=round(float(average_score)),
-        date=survey_date.strftime("%d.%m"),
+        level=forecast.level,
+        date=target_date.strftime("%d.%m"),
         hasData=True,
     )
 
@@ -1168,7 +1229,7 @@ def build_class_summary(school_class: Class, db: Session) -> ClassStatus:
 def get_school_summary(
     school_id: int,
     class_code: str,
-    date: Optional[str] = None,
+    date: Optional[PythonDate] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1181,7 +1242,7 @@ def get_school_summary(
         db=db,
     )
 
-    return build_class_summary(school_class, db)
+    return build_class_summary(school_class, date, db)
 
 
 @app.get("/api/schools/{school_id}/survey-classes", response_model=List[SurveyClass])
@@ -1450,13 +1511,27 @@ def build_class_recommendations(
     school_class: Class,
     month: Optional[str],
     db: Session,
+    current_user: User,
+    *,
+    is_admin: bool,
+    teacher_ids: set[int],
+    teacher_schedule_ids: set[int],
 ) -> Recommendation:
-    """Рассчитывает рекомендации на основе реального расписания."""
+    """Возвращает AI-рекомендации класса за выбранный месяц."""
+
+    school_local_today = get_school_local_today(
+        db,
+        school_class.school_id,
+    )
 
     try:
-        month_number = int(month) if month else PythonDate.today().month
+        month_number = (
+            int(month)
+            if month
+            else school_local_today.month
+        )
 
-        if month_number < 1 or month_number > 12:
+        if not 1 <= month_number <= 12:
             raise ValueError
     except (TypeError, ValueError):
         raise HTTPException(
@@ -1464,43 +1539,221 @@ def build_class_recommendations(
             detail="Месяц должен быть указан числом от 01 до 12",
         )
 
-    year = PythonDate.today().year
+    year = school_local_today.year
     days_in_month = calendar.monthrange(year, month_number)[1]
-    start_date = PythonDate(year, month_number, 1)
-    end_date = PythonDate(year, month_number, days_in_month)
 
-    counts = get_daily_lesson_counts(db, school_class.id, start_date, end_date)
+    period_start = PythonDate(year, month_number, 1)
+    period_end = PythonDate(year, month_number, days_in_month)
 
-    # Рекомендации формируются только по дням,
-    # для которых в расписании есть уроки.
-    scheduled_days = {day.day: count for day, count in counts.items() if count > 0}
+    tomorrow = school_local_today + timedelta(days=1)
 
-    if len(scheduled_days) < 2:
-        return Recommendation(
-            daysToReduce=[],
-            daysToMoveTo=[],
+    run_window_start = (
+        school_local_today
+        if month is None
+        else period_start
+    )
+    run_window_end = (
+        tomorrow
+        if month is None
+        else period_end
+    )
+
+    runs = db.scalars(
+        select(AIAnalysisRun)
+        .where(
+            AIAnalysisRun.class_id == school_class.id,
+            AIAnalysisRun.scope == "class",
+            AIAnalysisRun.period_start <= run_window_end,
+            AIAnalysisRun.period_end >= run_window_start,
         )
+        .order_by(
+            AIAnalysisRun.created_at.desc(),
+            AIAnalysisRun.id.desc(),
+        )
+    ).all()
 
-    # Дни с максимальной и минимальной нагрузкой.
-    max_count = max(scheduled_days.values())
-    min_count = min(scheduled_days.values())
+    latest_run = runs[0] if runs else None
 
-    days_to_reduce = sorted(
-        day for day, count in scheduled_days.items() if count == max_count
+    successful_run = next(
+        (run for run in runs if run.status == "succeeded"),
+        None,
     )
-    days_to_move_to = sorted(
-        day for day, count in scheduled_days.items() if count == min_count
+
+    analysis_status = (
+        latest_run.status
+        if latest_run is not None
+        else "not_started"
     )
 
-    # Если нагрузка одинакова во все дни,
-    # рекомендации не имеют смысла.
-    if max_count == min_count:
-        days_to_reduce = []
-        days_to_move_to = []
+    is_stale = (
+        successful_run is not None
+        and latest_run is not None
+        and latest_run.id != successful_run.id
+        and latest_run.status in {"queued", "running", "failed"}
+    )
+
+    daily_loads: list[RecommendationDailyLoad] = []
+    recommendations: list[RecommendationDetail] = []
+
+    if successful_run is not None:
+        load_rows = db.scalars(
+            select(AIDailyLoad)
+            .where(
+                AIDailyLoad.analysis_run_id == successful_run.id,
+                AIDailyLoad.class_id == school_class.id,
+                AIDailyLoad.date >= period_start,
+                AIDailyLoad.date <= period_end,
+            )
+            .order_by(AIDailyLoad.date)
+        ).all()
+
+        daily_loads = [
+            RecommendationDailyLoad(
+                date=row.date,
+                day=row.date.day,
+                level=row.level,
+                source=row.source,
+            )
+            for row in load_rows
+        ]
+
+        fallback_used = False
+
+        if month is not None:
+            # При явно выбранном месяце сохраняем прежнее поведение:
+            # возвращаем все рекомендации успешного запуска за месяц.
+            recommendation_rows = db.scalars(
+                select(AIRecommendation)
+                .where(
+                    AIRecommendation.analysis_run_id == successful_run.id,
+                    AIRecommendation.class_id == school_class.id,
+                    AIRecommendation.date >= period_start,
+                    AIRecommendation.date <= period_end,
+                )
+                .order_by(
+                    AIRecommendation.date,
+                    AIRecommendation.id,
+                )
+            ).all()
+
+        else:
+            # Без параметра month показываем рекомендации на завтра.
+            # Если их нет — используем рекомендации на сегодня.
+            recommendation_rows = []
+
+            for target_date in (tomorrow, school_local_today):
+                date_runs = db.scalars(
+                    select(AIAnalysisRun)
+                    .join(
+                        AIDailyLoad,
+                        AIDailyLoad.analysis_run_id == AIAnalysisRun.id,
+                    )
+                    .where(
+                        AIAnalysisRun.class_id == school_class.id,
+                        AIAnalysisRun.scope == "class",
+                        AIAnalysisRun.status == "succeeded",
+                        AIDailyLoad.class_id == school_class.id,
+                        AIDailyLoad.date == target_date,
+                    )
+                    .order_by(
+                        AIAnalysisRun.created_at.desc(),
+                        AIAnalysisRun.id.desc(),
+                    )
+                ).all()
+
+                if not date_runs:
+                    continue
+
+                # Берём только самый новый успешный запуск,
+                # который действительно анализировал эту дату.
+                date_run = date_runs[0]
+
+                date_recommendations = db.scalars(
+                    select(AIRecommendation)
+                    .where(
+                        AIRecommendation.analysis_run_id == date_run.id,
+                        AIRecommendation.class_id == school_class.id,
+                        AIRecommendation.date == target_date,
+                    )
+                    .order_by(
+                        AIRecommendation.id,
+                    )
+                ).all()
+
+                if date_recommendations:
+                    recommendation_rows = date_recommendations
+                    fallback_used = target_date == school_local_today
+                    break
+
+        is_stale = is_stale or fallback_used
+
+        for item in recommendation_rows:
+            if not is_admin:
+                if item.kind == "class":
+                    pass
+                elif item.kind == "teacher":
+                    if item.teacher_id not in teacher_ids:
+                        continue
+                elif item.kind == "lesson":
+                    if (
+                        item.schedule_id is None
+                        or item.schedule_id not in teacher_schedule_ids
+                    ):
+                        continue
+
+                    # Если у рекомендации также указан teacher_id,
+                    # он обязан совпадать с учителем назначения.
+                    if (
+                        item.teacher_id is not None
+                        and item.teacher_id not in teacher_ids
+                    ):
+                        continue
+
+            recommendations.append(
+                RecommendationDetail(
+                    date=item.date,
+                    kind=item.kind,
+                    priority=item.priority,
+                    title=item.title,
+                    recommendationText=item.recommendation_text,
+                    rationale=item.rationale,
+                    teacherId=item.teacher_id,
+                    scheduleId=item.schedule_id,
+                )
+            )
+
+    days_to_reduce = [
+        item.date.day
+        for item in daily_loads
+        if item.level in (0, 1)
+    ]
+
+    days_to_move_to = [
+        item.date.day
+        for item in daily_loads
+        if item.level in (3, 4) and item.source == "ai"
+    ]
 
     return Recommendation(
         daysToReduce=days_to_reduce,
         daysToMoveTo=days_to_move_to,
+        analysisStatus=analysis_status,
+        isStale=is_stale,
+        period=(
+            RecommendationPeriod(
+                start=successful_run.period_start,
+                end=successful_run.period_end,
+            )
+            if successful_run is not None
+            else None
+        ),
+        dailyLoads=daily_loads,
+        recommendations=recommendations,
+        dataSource=(
+            "ai"
+            if successful_run is not None
+            else "schedule"
+        ),
     )
 
 
@@ -1515,20 +1768,90 @@ def get_school_recommendations(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Возвращает рекомендации для класса выбранной школы."""
+    """Возвращает AI-рекомендации класса с проверкой ролевого доступа."""
 
-    school_class = require_school_class_access(
+    school = require_school_access(
         school_id=school_id,
-        class_code=class_code,
         user=current_user,
         db=db,
-        allowed_roles={"teacher", "admin"},
     )
+
+    school_class = db.scalar(
+        select(Class).where(
+            Class.school_id == school.id,
+            Class.code == class_code,
+        )
+    )
+
+    if school_class is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Класс не найден",
+        )
+
+    roles, _ = get_user_access(current_user, db)
+
+    # Ученик не получает рекомендации ни одного вида.
+    if not roles.intersection({"teacher", "admin"}):
+        raise HTTPException(
+            status_code=403,
+            detail="У вашей роли нет доступа к этому разделу",
+        )
+
+    is_admin = "admin" in roles
+
+    teacher_ids: set[int] = set()
+    teacher_schedule_ids: set[int] = set()
+
+    # Администратор имеет приоритет над учительской ролью.
+    if not is_admin:
+        teacher_ids = set(
+            db.scalars(
+                select(Teacher.id).where(
+                    Teacher.user_id == current_user.id,
+                    Teacher.school_id == school_id,
+                )
+            ).all()
+        )
+
+        if not teacher_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="У вас нет доступа к этому классу",
+            )
+
+        assignment_ids = db.scalars(
+            select(TeachingAssignment.id).where(
+                TeachingAssignment.school_id == school_id,
+                TeachingAssignment.class_id == school_class.id,
+                TeachingAssignment.academic_year_id
+                == school_class.academic_year_id,
+                TeachingAssignment.teacher_id.in_(teacher_ids),
+            )
+        ).all()
+
+        if not assignment_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="У вас нет доступа к этому классу",
+            )
+
+        teacher_schedule_ids = set(
+            db.scalars(
+                select(Schedule.id).where(
+                    Schedule.assignment_id.in_(assignment_ids)
+                )
+            ).all()
+        )
 
     return build_class_recommendations(
         school_class=school_class,
         month=month,
         db=db,
+        current_user=current_user,
+        is_admin=is_admin,
+        teacher_ids=teacher_ids,
+        teacher_schedule_ids=teacher_schedule_ids,
     )
 
 
