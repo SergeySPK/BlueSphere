@@ -8,7 +8,10 @@ from sqlalchemy import Date, Time, and_, case, cast, delete, func, or_, select, 
 
 from database import SessionLocal
 from max_sender import create_max_bot, send_notification
+from ai_queue import enqueue_ai_job
+from ai_config import get_ai_config_if_configured
 from models import (
+    AcademicYear,
     School,
     Class,
     Student,
@@ -122,6 +125,136 @@ def get_school_local_dates(session, now_utc: datetime) -> set:
     return local_dates
 
 
+def enqueue_daily_ai_jobs(
+    session,
+    now_utc: datetime,
+) -> int:
+    """
+    Ставит ежедневные AI-задачи для школ, у которых
+    наступило 22:00 по локальному времени.
+
+    Одна задача на школу и локальную дату.
+    Повторные вызовы защищены dedupe_key.
+    """
+
+    if now_utc.tzinfo is None or now_utc.utcoffset() is None:
+        raise ValueError("now_utc должен содержать часовой пояс.")
+
+    if get_ai_config_if_configured() is None:
+        logger.info(
+            "AI-провайдер не настроен. "
+            "Постановка ежедневных AI-задач отключена."
+        )
+        return 0
+
+    schools = session.scalars(
+        select(School).order_by(School.id)
+    ).all()
+
+    enqueued_count = 0
+
+    for school in schools:
+        if not school.timezone:
+            logger.error(
+                "У школы %s не задан часовой пояс. "
+                "AI-анализ пропущен.",
+                school.id,
+            )
+            continue
+
+        try:
+            school_timezone = ZoneInfo(school.timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.error(
+                "Некорректный часовой пояс школы %s: %s. "
+                "AI-анализ пропущен.",
+                school.id,
+                school.timezone,
+            )
+            continue
+
+        local_now = now_utc.astimezone(school_timezone)
+
+        # Планировщик вызывается каждую минуту.
+        # Окно в одну минуту обеспечивает однократную постановку
+        # при штатном цикле, а dedupe_key защищает от дублей.
+        if local_now.hour != 22 or local_now.minute != 0:
+            continue
+
+        analysis_date = local_now.date()
+
+        academic_year = session.scalar(
+            select(AcademicYear).where(
+                AcademicYear.school_id == school.id,
+                AcademicYear.is_active.is_(True),
+            )
+        )
+
+        if academic_year is None:
+            logger.warning(
+                "Для школы %s не найден активный учебный год. "
+                "AI-анализ пропущен.",
+                school.id,
+            )
+            continue
+
+        # Пока период ограничен оставшейся частью учебного года.
+        # Worker самостоятельно выберет из него будущие даты
+        # расписания, на которые есть уроки.
+        period_start = analysis_date + timedelta(days=1)
+        period_end = min(
+            analysis_date + timedelta(days=14),
+            academic_year.end_date,
+        )
+
+        if period_start > period_end:
+            logger.info(
+                "Для школы %s нет будущих дат в учебном году.",
+                school.id,
+            )
+            continue
+
+        dedupe_key = (
+            f"daily-school-{school.id}-{analysis_date.isoformat()}"
+        )
+
+        try:
+            enqueue_ai_job(
+                session,
+                school_id=school.id,
+                academic_year_id=academic_year.id,
+                class_id=None,
+                scope="school",
+                analysis_date=analysis_date,
+                period_start=period_start,
+                period_end=period_end,
+                dedupe_key=dedupe_key,
+                trigger="daily",
+            )
+
+            enqueued_count += 1
+
+        except ValueError:
+            # Если такой ключ уже использован с другим payload,
+            # это не штатный дубль, а конфликт данных.
+            logger.exception(
+                "Конфликт постановки AI-задачи для школы %s "
+                "за дату %s.",
+                school.id,
+                analysis_date,
+            )
+
+    if enqueued_count:
+        session.commit()
+
+        logger.info(
+            "В очередь AI поставлено задач: %s.",
+            enqueued_count,
+        )
+
+    return enqueued_count
+
+
 def run_scheduler_once() -> None:
     """
     Выполняет один цикл планировщика:
@@ -136,6 +269,10 @@ def run_scheduler_once() -> None:
     session = SessionLocal()
 
     try:
+        enqueue_daily_ai_jobs(
+            session=session,
+            now_utc=now_utc,
+        )
         # Закрываем просроченные опросы независимо от настроек школ.
         closed_count = close_expired_survey_instances(
             session=session,

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 import scheduler
 from models import (
+    AIAnalysisJob,
     User,
     Teacher,
     Subject,
@@ -2009,3 +2010,217 @@ def test_maintain_notification_lease_stops_when_attempt_is_stale(
     )
 
     assert calls == [(123, 2)]
+
+
+def test_enqueue_daily_ai_jobs_creates_school_job(
+    db_session,
+    survey_test_data,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        scheduler,
+        "get_ai_config_if_configured",
+        lambda: object(),
+    )
+
+    school = survey_test_data["school"]
+    academic_year = survey_test_data["academic_year"]
+
+    # 22:00 по времени школы Asia/Yekaterinburg.
+    now_utc = datetime(
+        2026,
+        11,
+        7,
+        17,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    result = scheduler.enqueue_daily_ai_jobs(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    assert result >= 1
+
+    job = db_session.scalar(
+        select(AIAnalysisJob).where(
+            AIAnalysisJob.school_id == school.id,
+        )
+    )
+
+    assert job is not None
+    assert job.academic_year_id == academic_year.id
+    assert job.class_id is None
+    assert job.scope == "school"
+    assert job.analysis_date == date(2026, 11, 7)
+    assert job.period_start == date(2026, 11, 8)
+    assert job.period_end == min(
+        date(2026, 11, 7) + timedelta(days=14),
+        academic_year.end_date,
+    )
+    assert job.trigger == "daily"
+    assert job.dedupe_key == "daily-school-{}-{}".format(
+        school.id,
+        date(2026, 11, 7).isoformat(),
+    )
+
+
+def test_enqueue_daily_ai_jobs_is_idempotent(
+    db_session,
+    survey_test_data,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        scheduler,
+        "get_ai_config_if_configured",
+        lambda: object(),
+    )
+
+    now_utc = datetime(
+        2026,
+        11,
+        7,
+        17,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    first_result = scheduler.enqueue_daily_ai_jobs(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    second_result = scheduler.enqueue_daily_ai_jobs(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    jobs = db_session.scalars(
+        select(AIAnalysisJob).where(
+            AIAnalysisJob.school_id
+            == survey_test_data["school"].id,
+        )
+    ).all()
+
+    assert first_result >= 1
+    assert second_result >= 1
+    assert len(jobs) == 1
+
+
+def test_enqueue_daily_ai_jobs_skips_before_22(
+    db_session,
+    survey_test_data,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        scheduler,
+        "get_ai_config_if_configured",
+        lambda: object(),
+    )
+
+    # 21:59 по времени школы Asia/Yekaterinburg.
+    now_utc = datetime(
+        2026,
+        11,
+        7,
+        16,
+        59,
+        tzinfo=timezone.utc,
+    )
+
+    result = scheduler.enqueue_daily_ai_jobs(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    jobs = db_session.scalars(
+        select(AIAnalysisJob).where(
+            AIAnalysisJob.school_id
+            == survey_test_data["school"].id,
+        )
+    ).all()
+
+    assert result == 0
+    assert jobs == []
+
+
+def test_enqueue_daily_ai_jobs_does_not_exceed_academic_year_end(
+    db_session,
+    survey_test_data,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        scheduler,
+        "get_ai_config_if_configured",
+        lambda: object(),
+    )
+
+    school = survey_test_data["school"]
+    academic_year = survey_test_data["academic_year"]
+
+    analysis_date = date(2027, 8, 25)
+    academic_year.end_date = date(2027, 8, 31)
+    db_session.flush()
+
+    now_utc = datetime(
+        2027,
+        8,
+        25,
+        17,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    result = scheduler.enqueue_daily_ai_jobs(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    assert result >= 1
+
+    job = db_session.scalar(
+        select(AIAnalysisJob).where(
+            AIAnalysisJob.school_id == school.id,
+        )
+    )
+
+    assert job is not None
+    assert job.period_start == date(2027, 8, 26)
+    assert job.period_end == date(2027, 8, 31)
+
+
+def test_enqueue_daily_ai_jobs_skips_when_ai_is_not_configured(
+    db_session,
+    survey_test_data,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        scheduler,
+        "get_ai_config_if_configured",
+        lambda: None,
+    )
+
+    now_utc = datetime(
+        2026,
+        11,
+        7,
+        17,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    result = scheduler.enqueue_daily_ai_jobs(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    jobs = db_session.scalars(
+        select(AIAnalysisJob).where(
+            AIAnalysisJob.school_id
+            == survey_test_data["school"].id,
+        )
+    ).all()
+
+    assert result == 0
+    assert jobs == []
