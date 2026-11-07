@@ -32,6 +32,7 @@ class _SplashScreenState extends State<SplashScreen> {
     _timer = Timer.periodic(const Duration(milliseconds: 2500), (timer) {
       if (!mounted) return;
       setState(() => _isVisible = false);
+
       Future.delayed(const Duration(milliseconds: 300), () {
         if (!mounted) return;
         setState(() {
@@ -87,6 +88,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 ],
               ),
             ),
+
             Positioned(
               bottom: 24.fh,
               left: 0,

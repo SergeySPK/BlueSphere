@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
-// Кастомный контейнер с сводкой
+// Кастомный виджет карточки с общей сводкой состояния класса
 class ClassSummaryCard extends StatelessWidget {
-  final String date;
-  final int percentage;
-  final String statusText;
-  final String hardestSubject;
-  final String easiestSubject;
+  final String date; // Дата опроса
+  final int percentage; // Процент учеников с самым частым ответом
+  final String statusText; // Текст статуса
+  final String hardestSubject; // Самый тревожный предмет
+  final String easiestSubject; // Самый легкий предмет
 
   const ClassSummaryCard({super.key, required this.date, required this.percentage, required this.statusText, required this.hardestSubject, required this.easiestSubject});
 

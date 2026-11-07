@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
+import '../../domain/recommendation.dart';
 import 'colors.dart';
 
 // Кастомный блок рекомендаций
 class RecommendationsBlock extends StatelessWidget {
-  final List<int> daysToReduce; // Уменьшить нагрузку
-  final List<int> daysToMoveTo; // Можно поменять с днем
+  final List<int> daysToReduce; // Дни, где нужно снизить нагрузку
+  final List<int> daysToMoveTo; // Дни, куда можно перенести задания
 
   const RecommendationsBlock({super.key, required this.daysToReduce, required this.daysToMoveTo});
 
@@ -70,6 +71,7 @@ class RecommendationsBlock extends StatelessWidget {
     );
   }
 
+  // Вспомогательный виджет для отрисовки плашки с днем
   Widget _buildDayChip(int day, Color backgroundColor, Color textColor) {
     return Container(
       width: 30.fw,
@@ -84,13 +86,7 @@ class RecommendationsBlock extends StatelessWidget {
   }
 }
 
-class AiRecommendationItem {
-  final String title;
-  final String description;
-
-  AiRecommendationItem({required this.title, required this.description});
-}
-
+// Блок с текстовыми рекомендациями от ИИ
 class AiRecommendationsCard extends StatelessWidget {
   final List<AiRecommendationItem> recommendations;
 
@@ -98,7 +94,8 @@ class AiRecommendationsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (recommendations.isEmpty) return SizedBox.shrink();
+    // Скрываем блок, если рекомендаций нет
+    if (recommendations.isEmpty) return const SizedBox.shrink();
 
     return Container(
       padding: ps(v: 16.fh, h: 16.fw),
@@ -128,7 +125,7 @@ class AiRecommendationsCard extends StatelessWidget {
                       style: TextStyle(fontFamily: 'Inter', fontSize: 12.fh, fontWeight: .w600, color: black),
                     ),
                     TextSpan(
-                      text: rec.description,
+                      text: rec.recommendationText,
                       style: TextStyle(fontFamily: 'SF Pro', fontSize: 12.fh, fontWeight: .w400, color: text),
                     ),
                   ],

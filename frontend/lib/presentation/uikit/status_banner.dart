@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
-// Кастомный баннер с уровнем нагрузки
+// Кастомный баннер для отображения уровня нагрузки класса
 class StatusBanner extends StatelessWidget {
-  final int level;
-  final String date;
-  final bool showButton;
-  final VoidCallback? onGoToSummary;
+  final int level; // Уровень нагрузки
+  final String date; // Дата опроса для подписи
+  final bool showButton; // Показывать ли кнопку перехода к сводке
+  final VoidCallback? onGoToSummary; // Колбэк для кнопки
 
   const StatusBanner({super.key, required this.level, required this.date, this.showButton = true, this.onGoToSummary});
 
@@ -18,6 +18,7 @@ class StatusBanner extends StatelessWidget {
     String title;
     String description;
 
+    // Настраиваем цвета, иконки и текст в зависимости от уровня нагрузки
     switch (level) {
       case 0:
         cardColor = loadMax;
@@ -64,7 +65,7 @@ class StatusBanner extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.transparent,
               shape: BoxShape.circle,
-              border: Border.all(color: cardColor, width: 4.fw),
+              border: Border.all(color: cardColor, width: 4.fw), // Обводка круга
             ),
             child: Center(
               child: Icon(icon, color: cardColor, size: 50.fh),
@@ -88,7 +89,6 @@ class StatusBanner extends StatelessWidget {
                   description,
                   style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, fontWeight: .w400, color: cardColor),
                 ),
-
                 if (showButton) ...[
                   SizedBox(height: 15.fh),
                   SizedBox(

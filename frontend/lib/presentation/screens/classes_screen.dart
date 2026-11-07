@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
-import '../../domain/school_class.dart';
 import '../../data/api_service.dart';
+import '../../domain/school_class.dart';
 import '../uikit/colors.dart';
 import '../uikit/custom_header.dart';
 import '../uikit/error_screen.dart';
+import '../../core/logger.dart';
 
-// Экран классов
+// Экран выбора класса
 class ClassesScreen extends StatefulWidget {
   final Function(String id, String name) onClassSelected;
 
@@ -29,17 +30,21 @@ class _ClassesScreenState extends State<ClassesScreen> {
     _loadClasses();
   }
 
+  // Загрузка классов с бэкенда и сортировка по алфавиту
   Future<void> _loadClasses() async {
     setState(() {
       _isLoading = true;
       _errorCode = null;
     });
 
+    AppLogger.info('Начало загрузки классов', tag: '[UI] Classes');
+
     try {
       final data = await ApiService.getClasses();
       data.forEach((key, value) {
         value.sort((a, b) => a.name.compareTo(b.name));
       });
+
       if (mounted) {
         setState(() {
           _classes = data;
@@ -51,13 +56,16 @@ class _ClassesScreenState extends State<ClassesScreen> {
             });
           _isLoading = false;
         });
+        AppLogger.info('Классы успешно загружены', tag: '[UI] Classes');
       }
-    } catch (e) {
+    } catch (e, stack) {
       int code = 500;
       final errorString = e.toString();
       if (errorString.contains('Exception: ')) {
         code = int.tryParse(errorString.split('Exception: ')[1]) ?? 500;
       }
+
+      AppLogger.error('Ошибка загрузки классов (код: $code)', error: e, stackTrace: stack, tag: '[UI] Classes');
 
       if (mounted) {
         setState(() {
@@ -97,6 +105,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
     );
   }
 
+  // Отрисовка группы
   Widget _buildAccordionGroup(String groupName, List<SchoolClass> classes) {
     bool isExpanded = _expandedGroup == groupName;
 
@@ -123,6 +132,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
             ),
           ),
         ),
+
         if (isExpanded)
           Padding(
             padding: po(t: 4.fh, b: 16.fh),
@@ -139,6 +149,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
     );
   }
 
+  // Плашка с названием класса
   Widget _buildClassChip(SchoolClass schoolClass) {
     return GestureDetector(
       onTap: () {

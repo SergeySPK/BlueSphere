@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import '../../domain/class_status.dart';
 import '../../domain/lesson.dart';
+import '../../domain/recommendation.dart';
 import '../../data/api_service.dart';
+import '../../core/logger.dart';
 import '../uikit/colors.dart';
 import '../uikit/custom_header.dart';
 import '../uikit/status_banner.dart';
 import '../uikit/schedule_card.dart';
 import '../uikit/recommendations_block.dart';
-import 'dart:math';
 
-// Экран расписания дня
+// Экран с деталями дня
 class DayDetailsScreen extends StatefulWidget {
   final int day;
   final String monthName;
@@ -45,19 +46,24 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
   int? _editingLessonNumber;
   ClassStatus? _status;
   String _displayDate = '';
+  Recommendation? _recommendation;
 
   @override
   void initState() {
     super.initState();
     _loadSchedule();
     _loadSummary();
+    _loadRecommendations();
   }
 
+  // Загрузка расписания на выбранный день
   Future<void> _loadSchedule() async {
     final year = DateTime.now().year;
     final month = widget.monthNumber.padLeft(2, '0');
     final day = widget.day.toString().padLeft(2, '0');
     final dateStr = '$year-$month-$day';
+
+    AppLogger.info('Загрузка расписания на $dateStr', tag: '[UI] DayDetails');
 
     final data = await ApiService.getSchedule(widget.classId, dateStr);
 
@@ -73,44 +79,51 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
     }
   }
 
+  // Загрузка статуса для баннера
   Future<void> _loadSummary() async {
     try {
-      final surveys = await ApiService.getClassSurveys(widget.classId);
-      String dateToFetch = '';
+      final now = DateTime.now();
+      final todayDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-      if (surveys.isNotEmpty) {
-        dateToFetch = surveys[0]['survey_date'];
-      } else {
-        final now = DateTime.now();
-        dateToFetch = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      }
+      AppLogger.info('Запрос баннера на дату: $todayDate', tag: '[UI] DayDetails');
 
-      final summary = await ApiService.getSummary(widget.classId, dateToFetch);
+      final summary = await ApiService.getSummary(widget.classId, todayDate);
+
+      AppLogger.info('Ответ баннера: level=${summary.level}, hasData=${summary.hasData}', tag: '[UI] DayDetails');
 
       if (mounted) {
         setState(() {
           _status = summary;
-          _displayDate = _formatDate(dateToFetch);
+          _displayDate = _formatDate(todayDate);
         });
       }
     } catch (e) {
-      debugPrint('Ошибка загрузки баннера: $e');
+      AppLogger.error('Ошибка загрузки баннера', error: e, tag: '[UI] DayDetails');
     }
   }
 
-  Color? _randomEditColor;
+  // Загрузка рекомендаций
+  Future<void> _loadRecommendations() async {
+    if (!widget.isTeacher) return;
+    try {
+      AppLogger.info('Запрос рекомендаций для класса ${widget.classId}', tag: '[UI] DayDetails');
+      final rec = await ApiService.getRecommendations(widget.classId);
+      if (mounted) setState(() => _recommendation = rec);
+    } catch (e) {
+      AppLogger.error('Ошибка загрузки рекомендаций', error: e, tag: '[UI] DayDetails');
+    }
+  }
 
+  // Открытие диалога редактирования типа урока
   Future<void> _editLesson(Lesson lesson) async {
     if (_editingLessonNumber != null) return;
-    final random = Random();
-    setState(() {
-      _editingLessonNumber = lesson.lessonNumber;
-      _randomEditColor = editColors[random.nextInt(editColors.length)];
-    });
+    setState(() => _editingLessonNumber = lesson.lessonNumber);
+
+    AppLogger.info('Начало редактирования урока ID: ${lesson.id}', tag: '[UI] DayDetails');
 
     bool isSessionStarted = false;
     final startFuture = ApiService.startEditing(widget.classId, lesson.id).then((_) => isSessionStarted = true).catchError((e) {
-      debugPrint('Ошибка startEditing (фон): $e');
+      AppLogger.error('Ошибка фонового startEditing', error: e, tag: '[UI] DayDetails');
     });
 
     final TextEditingController controller = TextEditingController(text: lesson.lessonType);
@@ -161,7 +174,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                         setState(() => _editingLessonNumber = null);
                         Navigator.pop(dialogContext);
                         ApiService.stopEditing(widget.classId, lesson.id).catchError((e) {
-                          debugPrint('stopEditing error: $e');
+                          AppLogger.error('Ошибка stopEditing (отмена)', error: e, tag: '[UI] DayDetails');
                         });
                       },
                       child: Text(
@@ -179,7 +192,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                           try {
                             await ApiService.stopEditing(widget.classId, lesson.id);
                           } catch (e) {
-                            debugPrint('stopEditing error: $e');
+                            AppLogger.error('Ошибка stopEditing (пустой ввод)', error: e, tag: '[UI] DayDetails');
                           }
                           if (!dialogContext.mounted) return;
                           setState(() => _editingLessonNumber = null);
@@ -190,7 +203,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                         await startFuture;
                         if (!isSessionStarted) {
                           if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Не удалось начать редактирование. Попробуйте позже.')));
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Не удалось начать редактирование. Попробуйте позже.')));
                           }
                           if (!dialogContext.mounted) return;
                           setState(() => _editingLessonNumber = null);
@@ -202,25 +215,43 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                         try {
                           success = await ApiService.updateLesson(widget.classId, lesson.id, newType);
                         } catch (e) {
-                          debugPrint('updateLesson error: $e');
+                          AppLogger.error('Ошибка updateLesson', error: e, tag: '[UI] DayDetails');
                           success = false;
                         } finally {
                           try {
                             await ApiService.stopEditing(widget.classId, lesson.id);
                           } catch (e) {
-                            debugPrint('stopEditing error: $e');
+                            AppLogger.error('Ошибка stopEditing (финал)', error: e, tag: '[UI] DayDetails');
                           }
                         }
 
                         if (!dialogContext.mounted) return;
 
                         if (success) {
-                          setState(() => _editingLessonNumber = null);
+                          AppLogger.info('Урок успешно обновлен локально', tag: '[UI] DayDetails');
+                          setState(() {
+                            final index = _lessons!.indexWhere((l) => l.id == lesson.id);
+                            if (index != -1) {
+                              _lessons![index] = Lesson(
+                                id: lesson.id,
+                                lessonNumber: lesson.lessonNumber,
+                                subjectName: lesson.subjectName,
+                                teacherName: lesson.teacherName,
+                                room: lesson.room,
+                                lessonType: newType,
+                                subgroup: lesson.subgroup,
+                                updatedBy: lesson.updatedBy,
+                                isEditable: lesson.isEditable,
+                                isEditing: false,
+                                editorName: null,
+                              );
+                            }
+                            _editingLessonNumber = null;
+                          });
                           Navigator.pop(dialogContext);
-                          _loadSchedule();
                         } else {
                           if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Не удалось сохранить изменение. Попробуйте ещё раз.')));
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Не удалось сохранить изменение. Попробуйте ещё раз.')));
                           }
                           setState(() => _editingLessonNumber = null);
                           Navigator.pop(dialogContext);
@@ -247,8 +278,11 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
     );
   }
 
+  // Форматирование даты
   String _formatDate(String isoDate) {
     if (isoDate.isEmpty) return '';
+    if (isoDate.contains('.')) return isoDate;
+
     try {
       final parts = isoDate.split('-');
       if (parts.length == 3) {
@@ -260,6 +294,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
     return isoDate;
   }
 
+  // Получение цвета по уровню нагрузки
   Color _getLoadColor(int level) {
     switch (level) {
       case 0:
@@ -291,7 +326,7 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
           children: [
             GestureDetector(
               onTap: widget.onGoToClasses,
-              child: CustomHeader(title: 'Класс ${widget.className}', showBack: true, onBack: () => Navigator.pop(context)),
+              child: CustomHeader(title: 'Класс ${widget.className}'),
             ),
             Expanded(
               child: _isLoading
@@ -312,27 +347,18 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
                               },
                             ),
                           SizedBox(height: 11.fh),
-
                           if (_lessons != null)
                             ScheduleCard(
                               day: widget.day.toString(),
                               month: widget.monthName,
                               weekday: weekdayName,
-                              lessons: _lessons!
-                                  .map((l) => LessonData(number: l.lessonNumber, subject: l.subjectName, type: l.lessonType, teacherName: l.teacherName, canEdit: l.isEditable, isEditing: l.isEditing, editorName: l.editorName))
-                                  .toList(),
+                              lessons: _lessons!,
                               statusColor: dayColor,
                               editingLessonNumber: _editingLessonNumber,
-                              editingColor: _randomEditColor ?? loadMax,
-                              onEditLesson: widget.isTeacher
-                                  ? (lessonData) {
-                                      final lesson = _lessons!.firstWhere((l) => l.lessonNumber == lessonData.number);
-                                      _editLesson(lesson);
-                                    }
-                                  : null,
+                              onEditLesson: widget.isTeacher ? (lesson) => _editLesson(lesson) : null,
                             ),
                           SizedBox(height: 16.fh),
-                          if (widget.isTeacher) AiRecommendationsCard(recommendations: []),
+                          if (widget.isTeacher && _recommendation != null) AiRecommendationsCard(recommendations: _recommendation!.recommendations),
                         ],
                       ),
                     ),

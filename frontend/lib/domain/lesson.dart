@@ -1,16 +1,16 @@
-// Модель для получения уроков
+// Модель данных для одного урока в расписании
 class Lesson {
-  final String id;
-  final int lessonNumber;
-  final String subjectName;
-  final String teacherName;
-  final String room;
-  final String lessonType;
-  final int subgroup;
-  final String? updatedBy;
-  final bool isEditable;
-  final bool isEditing;
-  final String? editorName;
+  final String id; // Уникальный ID урока в БД
+  final int lessonNumber; // Порядковый номер в расписании
+  final String subjectName; // Название предмета
+  final String teacherName; // ФИО преподавателя
+  final String room; // Номер кабинета
+  final String lessonType; // Тип занятия
+  final int subgroup; // Номер подгруппы
+  final String? updatedBy; // ID того, кто последним редактировал урок
+  final bool isEditable; // Может ли текущий пользователь редактировать этот урок
+  final bool isEditing; // Редактируется ли урок прямо сейчас
+  final String? editorName; // Имя того, кто сейчас редактирует
 
   Lesson({
     required this.id,
@@ -26,6 +26,7 @@ class Lesson {
     this.editorName,
   });
 
+  // Парсинг JSON-ответа от бэкенда в объект Dart
   factory Lesson.fromJson(Map<String, dynamic> json) {
     return Lesson(
       id: json['id'] as String,

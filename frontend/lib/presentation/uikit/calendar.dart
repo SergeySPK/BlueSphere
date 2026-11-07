@@ -3,14 +3,15 @@ import 'package:vize/vize.dart';
 import '../../domain/load_day.dart';
 import 'colors.dart';
 
-// Кастомный календарь
+// Кастомный виджет календаря (тепловой карты нагрузки)
 class LoadCalendar extends StatelessWidget {
-  final DateTime date;
-  final List<LoadDay> loadDays;
-  final Function(int day)? onDayTap;
+  final DateTime date; // Месяц и год для отображения
+  final List<LoadDay> loadDays; // Данные о нагрузке по дням
+  final Function(int day)? onDayTap; // Колбэк при нажатии на день
 
   const LoadCalendar({super.key, required this.date, required this.loadDays, this.onDayTap});
 
+  // Возвращает цвет в зависимости от уровня нагрузки
   Color _getLoadColor(int level) {
     switch (level) {
       case 0:
@@ -26,6 +27,7 @@ class LoadCalendar extends StatelessWidget {
     }
   }
 
+  // Возвращает название месяца на русском
   String _getMonthName(int month) {
     const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
     return months[month - 1];
@@ -38,7 +40,6 @@ class LoadCalendar extends StatelessWidget {
     final int firstDayWeekday = DateTime(date.year, date.month, 1).weekday;
 
     List<Widget> gridCells = [];
-
     int offset;
     int currentWeekday;
 
@@ -54,14 +55,16 @@ class LoadCalendar extends StatelessWidget {
       gridCells.add(_buildEmptyStartCell());
     }
 
+    // Заполняем сетку днями месяца
     for (int day = 1; day <= daysInMonth; day++) {
       if (day == 1 && firstDayWeekday == 7) continue;
-      final dayData = loadDays.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: 4, isEditing: false));
-      final bool isToday = (date.year == now.year) && (date.month == now.month) && (day == now.day);
 
+      final dayData = loadDays.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: null, isEditing: false));
+      final bool isToday = (date.year == now.year) && (date.month == now.month) && (day == now.day);
       if (currentWeekday != 7) {
         gridCells.add(_buildDayCell(dayData, isToday, false));
       }
+      // Циклически переключаем день недели
       if (currentWeekday == 7) {
         currentWeekday = 1;
       } else {
@@ -69,6 +72,7 @@ class LoadCalendar extends StatelessWidget {
       }
     }
 
+    // Выравниваем сетку по 6 колонок
     while (gridCells.length % 6 != 0) {
       gridCells.add(_buildEmptyStartCell());
     }
@@ -118,14 +122,13 @@ class LoadCalendar extends StatelessWidget {
             ],
           ),
           SizedBox(height: 20.fh),
+          // Сетка календаря
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 6, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 1),
             itemCount: gridCells.length,
-            itemBuilder: (context, index) {
-              return gridCells[index];
-            },
+            itemBuilder: (context, index) => gridCells[index],
           ),
           SizedBox(height: 8.fh),
           Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [_buildWeekDay('пн'), _buildWeekDay('вт'), _buildWeekDay('ср'), _buildWeekDay('чт'), _buildWeekDay('пт'), _buildWeekDay('сб')]),
@@ -134,26 +137,28 @@ class LoadCalendar extends StatelessWidget {
     );
   }
 
+  // Пустая ячейка для выравнивания сетки
   Widget _buildEmptyStartCell() {
     return Container(
       decoration: BoxDecoration(color: Colors.transparent, borderRadius: BorderRadius.circular(5)),
     );
   }
 
+  // Ячейка с конкретным днем
   Widget _buildDayCell(LoadDay dayData, bool isToday, bool isSunday) {
-    final level = dayData.level;
+    final int? level = dayData.level;
     final isEditing = dayData.isEditing;
-    final fillColor = isSunday ? emptyCell : _getLoadColor(level);
-    final textColor = isSunday ? text : white;
+    final fillColor = _getLoadColor(level ?? 4);
+    final textColor = white;
 
     Widget cell = Container(
       decoration: BoxDecoration(
         color: fillColor,
         borderRadius: BorderRadius.circular(5.r),
         border: isEditing
-            ? Border.all(color: red, width: 3.fw)
+            ? Border.all(color: red, width: 3.fw) // Красная рамка, если день редактируется
             : isToday
-            ? Border.all(color: currentDayBorder, width: 3.fw)
+            ? Border.all(color: currentDayBorder, width: 3.fw) // Синяя рамка для сегодня
             : null,
       ),
       child: Stack(
@@ -164,14 +169,15 @@ class LoadCalendar extends StatelessWidget {
               style: TextStyle(fontFamily: 'Inter', fontSize: 12.fh, fontWeight: .w400, color: textColor),
             ),
           ),
+          // Иконка "обновления", если день редактируется
           if (isEditing)
             Positioned(
-              bottom: -3,
-              right: -3,
+              bottom: -3.fh,
+              right: -3.fw,
               child: Container(
-                padding: pa(2),
+                padding: ps(h: 2.fw, v: 2.fh),
                 decoration: BoxDecoration(color: red, shape: BoxShape.circle),
-                child: Icon(Icons.refresh, color: Colors.white, size: 10.fw),
+                child: Icon(Icons.refresh, color: Colors.white, size: 10.fh),
               ),
             ),
         ],
@@ -190,6 +196,7 @@ class LoadCalendar extends StatelessWidget {
     );
   }
 
+  // Элемент легенды
   Widget _buildLegendItem(String title, Color color) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -208,6 +215,7 @@ class LoadCalendar extends StatelessWidget {
     );
   }
 
+  // Подпись дня недели
   Widget _buildWeekDay(String day) {
     return Text(
       day,

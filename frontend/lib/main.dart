@@ -5,9 +5,10 @@ import 'package:blue_sphere/presentation/screens/surveys_screen.dart';
 import 'package:blue_sphere/presentation/screens/splash_screen.dart';
 import 'package:blue_sphere/presentation/uikit/bottom_nav_bar.dart';
 import 'package:blue_sphere/presentation/uikit/colors.dart';
-import 'package:vize/vize.dart';
+import 'package:blue_sphere/core/logger.dart';
 import 'package:blue_sphere/data/api_service.dart';
 import 'package:flutter_max_miniapp/flutter_max_miniapp.dart';
+import 'package:vize/vize.dart';
 
 // Точка входа в приложение
 void main() async {
@@ -15,7 +16,7 @@ void main() async {
   runApp(const MyApp());
 }
 
-// Функция для перевода ID класса в красивое название
+// Перевод технического ID класса
 String getRussianClassName(String classId) {
   if (classId.isEmpty) return 'Мой класс';
   final match = RegExp(r'^(\d+)([a-zA-Z]+)$').firstMatch(classId);
@@ -57,6 +58,7 @@ String getRussianClassName(String classId) {
   return classId;
 }
 
+// Корневой виджет приложения
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -67,6 +69,7 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(scaffoldBackgroundColor: background),
       builder: (context, child) {
+        // Инициализация библиотеки Vize для адаптивной верстки
         Vize.init(context, figmaWidth: 375, figmaHeight: 812);
         return child!;
       },
@@ -75,6 +78,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// Обертка для авторизации через MAX и загрузки начальных данных
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
 
@@ -93,32 +97,25 @@ class _AuthWrapperState extends State<AuthWrapper> {
     _initializeApp();
   }
 
+  // Инициализация MAX MiniApp и получение данных пользователя с бэкенда
   Future<void> _initializeApp() async {
     try {
-      // Инициализируем MAX
       final webApp = MaxWebApp();
       webApp.init();
 
-      try {
-        await webApp.enableVerticalSwipes();
-      } catch (e) {
-        debugPrint('Свайпы недоступны: $e');
-      }
-
       final initData = webApp.initData;
-
       if (initData != null && initData.isNotEmpty) {
         final authData = await ApiService.auth(initData);
-
         if (authData != null) {
           _roles = List<String>.from(authData['roles'] ?? []);
           _classIds = List<String>.from(authData['class_ids'] ?? []);
+          AppLogger.info('Успешная авторизация. Роли: $_roles', tag: '[AUTH]');
         }
       } else {
-        debugPrint('initData пуст. Приложение запущено вне MAX.');
+        AppLogger.error('initData пуст. Приложение запущено вне MAX', tag: '[AUTH]');
       }
-    } catch (e) {
-      debugPrint('Ошибка инициализации MAX: $e');
+    } catch (e, stack) {
+      AppLogger.error('Ошибка авторизации', error: e, stackTrace: stack, tag: '[AUTH]');
     }
 
     if (mounted) {
@@ -137,6 +134,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 }
 
+// Главный экран с нижней навигацией и переключением вкладок
 class MainScreen extends StatefulWidget {
   final List<String> roles;
   final List<String> classIds;
@@ -151,6 +149,8 @@ class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
   String _selectedClassId = 'Выберите класс';
   String _selectedClassName = 'Выберите класс';
+
+  // Ключ для управления навигацией внутри вкладки "Нагрузка"
   final GlobalKey<NavigatorState> _loadNavigatorKey = GlobalKey<NavigatorState>();
 
   bool get isTeacher => widget.roles.contains('teacher') || widget.roles.contains('admin');
@@ -158,6 +158,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    // Если ученик, автоматически выбираем его класс
     if (!isTeacher && widget.classIds.isNotEmpty) {
       _selectedClassId = widget.classIds.first;
       _selectedClassName = getRussianClassName(widget.classIds.first);
@@ -168,6 +169,7 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     final List<Widget> screens = [];
 
+    // Вкладка "Классы"
     if (isTeacher) {
       screens.add(
         ClassesScreen(
@@ -182,6 +184,7 @@ class _MainScreenState extends State<MainScreen> {
       );
     }
 
+    // Вкладка "Нагрузка"
     screens.add(
       Navigator(
         key: _loadNavigatorKey,
@@ -192,6 +195,7 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
 
+    // Вкладка "Опросы"
     screens.add(SurveysScreen(classId: _selectedClassId, className: _selectedClassName, onGoToClasses: () => setState(() => _currentIndex = 0)));
 
     return Scaffold(

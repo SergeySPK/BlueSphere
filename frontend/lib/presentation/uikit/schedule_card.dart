@@ -1,31 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
+import '../../domain/lesson.dart';
 import 'colors.dart';
 
-// Кастомный блок с расписанием
-class LessonData {
-  final int number;
-  final String subject;
-  final String type;
-  final String teacherName;
-  final bool canEdit;
-  final bool isEditing;
-  final String? editorName;
-
-  LessonData({required this.number, required this.subject, required this.type, required this.teacherName, this.canEdit = false, required this.isEditing, this.editorName});
-}
-
+// Кастомный виджет карточки расписания на день
 class ScheduleCard extends StatelessWidget {
-  final String day;
-  final String month;
-  final String weekday;
-  final List<LessonData> lessons;
-  final Color statusColor;
-  final Function(LessonData)? onEditLesson;
-  final int? editingLessonNumber;
-  final Color editingColor;
+  final String day; // Номер дня
+  final String month; // Название месяца
+  final String weekday; // День недели
+  final List<Lesson> lessons;
+  final Color statusColor; // Цвет плашки дня
+  final Function(Lesson)? onEditLesson; //
+  final int? editingLessonNumber; // Номер урока, который редактируем
 
-  const ScheduleCard({super.key, required this.day, required this.month, required this.weekday, required this.lessons, required this.statusColor, this.onEditLesson, this.editingLessonNumber, required this.editingColor});
+  const ScheduleCard({super.key, required this.day, required this.month, required this.weekday, required this.lessons, required this.statusColor, this.onEditLesson, this.editingLessonNumber});
+
+  // Генерируем фиксированный цвет для каждого урока на основе его номера
+  Color _getEditorColor(int lessonNumber) {
+    if (editColors.isEmpty) return loadMax;
+    return editColors[lessonNumber % editColors.length];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,6 +29,7 @@ class ScheduleCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Шапка карточки
           Row(
             children: [
               Container(
@@ -65,6 +60,7 @@ class ScheduleCard extends StatelessWidget {
             ],
           ),
           SizedBox(height: 16.fh),
+          // Список уроков
           if (lessons.isEmpty)
             Padding(
               padding: ps(v: 16.fh),
@@ -77,8 +73,9 @@ class ScheduleCard extends StatelessWidget {
             )
           else
             ...lessons.map((lesson) {
-              final isEditing = (lesson.number == editingLessonNumber) || lesson.isEditing;
-              final hColor = editingColor;
+              final isEditing = (lesson.lessonNumber == editingLessonNumber) || lesson.isEditing;
+              final hColor = _getEditorColor(lesson.lessonNumber);
+
               return Padding(
                 padding: po(b: 16.fh),
                 child: Column(
@@ -90,7 +87,7 @@ class ScheduleCard extends StatelessWidget {
                         Padding(
                           padding: po(t: 4.fh),
                           child: Text(
-                            '${lesson.number}. ',
+                            '${lesson.lessonNumber}. ',
                             style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: .w500, color: Color(0xff7D7D7D)),
                           ),
                         ),
@@ -110,11 +107,11 @@ class ScheduleCard extends StatelessWidget {
                               text: TextSpan(
                                 children: [
                                   TextSpan(
-                                    text: '${lesson.subject}. ',
+                                    text: '${lesson.subjectName}. ',
                                     style: TextStyle(fontFamily: 'Inter', fontSize: 14.fh, fontWeight: .w400, color: black),
                                   ),
                                   TextSpan(
-                                    text: lesson.type,
+                                    text: lesson.lessonType,
                                     style: TextStyle(fontFamily: 'SF Pro', fontSize: 14.fh, fontWeight: .w400, color: black),
                                   ),
                                 ],
@@ -123,21 +120,21 @@ class ScheduleCard extends StatelessWidget {
                           ),
                         ),
                         SizedBox(width: 12.fw),
-                        if (onEditLesson != null && lesson.canEdit)
+                        if (onEditLesson != null && lesson.isEditable)
                           GestureDetector(
                             onTap: () {
                               if (onEditLesson != null) onEditLesson!(lesson);
                             },
                             child: Container(
-                              width: 26.fw,
-                              height: 26.fh,
+                              width: 26,
+                              height: 26,
                               decoration: BoxDecoration(color: loadMax, borderRadius: BorderRadius.circular(4.r)),
                               child: Icon(Icons.edit_outlined, color: Colors.white, size: 18.fh),
                             ),
                           ),
                       ],
                     ),
-
+                    // Плашка с ФИО того, кто редактирует
                     if (isEditing)
                       Row(
                         children: [

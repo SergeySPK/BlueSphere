@@ -4,6 +4,7 @@ import '../../data/api_service.dart';
 import '../../domain/load_day.dart';
 import '../../domain/class_status.dart';
 import '../../domain/recommendation.dart';
+import '../../core/logger.dart';
 import '../uikit/calendar.dart';
 import '../uikit/colors.dart';
 import '../uikit/custom_header.dart';
@@ -62,6 +63,7 @@ class _LoadScreenState extends State<LoadScreen> {
     }
   }
 
+  // Основной метод загрузки данных для экрана
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -71,17 +73,20 @@ class _LoadScreenState extends State<LoadScreen> {
     final now = DateTime.now();
     final month = now.month.toString().padLeft(2, '0');
     final todayDate = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
-
-    // Загружаем календарь
     try {
+      AppLogger.info('Загрузка тепловой карты за месяц $month', tag: '[UI] LoadScreen');
       final heatmap = await ApiService.getHeatmap(widget.classId, month);
+
       if (mounted) setState(() => _loadDays = heatmap);
+      AppLogger.info('Тепловая карта загружена (дней: ${heatmap.length})', tag: '[UI] LoadScreen');
     } catch (e) {
       int code = 500;
       final errorString = e.toString();
       if (errorString.contains('Exception: ')) {
         code = int.tryParse(errorString.split('Exception: ')[1]) ?? 500;
       }
+
+      AppLogger.error('Ошибка загрузки тепловой карты', error: e, tag: '[UI] LoadScreen');
 
       if (mounted) {
         setState(() {
@@ -91,46 +96,43 @@ class _LoadScreenState extends State<LoadScreen> {
       }
       return;
     }
-
-    // Загружаем статус и дату последнего опроса
     try {
-      final surveys = await ApiService.getClassSurveys(widget.classId);
-      String dateForSummary = todayDate;
-
-      if (surveys.isNotEmpty) {
-        dateForSummary = surveys[0]['survey_date'];
-      }
-
-      final status = await ApiService.getSummary(widget.classId, dateForSummary);
+      AppLogger.info('Запрос баннера на дату: $todayDate', tag: '[UI] LoadScreen');
+      final status = await ApiService.getSummary(widget.classId, todayDate);
 
       if (mounted) {
         setState(() {
           _status = status;
-          _displayDate = _formatDate(dateForSummary);
+          _displayDate = _formatDate(todayDate);
         });
       }
+      AppLogger.info('Баннер загружен: level=${status.level}, hasData=${status.hasData}', tag: '[UI] LoadScreen');
     } catch (e) {
-      print('Баннер недоступен: $e');
+      AppLogger.error('Ошибка загрузки баннера', error: e, tag: '[UI] LoadScreen');
     }
-
-    // Загружаем рекомендации (только для учителя)
     if (widget.isTeacher) {
       try {
+        AppLogger.info('Запрос рекомендаций ИИ', tag: '[UI] LoadScreen');
         final recommendations = await ApiService.getRecommendations(widget.classId);
+
+        AppLogger.info('Рекомендации получены. Статус: ${recommendations.analysisStatus}', tag: '[UI] LoadScreen');
+
         if (mounted) setState(() => _recommendation = recommendations);
       } catch (e) {
-        print('Рекомендации недоступны (403), скрываем их');
+        AppLogger.error('Рекомендации недоступны (возможно 403)', error: e, tag: '[UI] LoadScreen');
       }
     }
 
-    // Выключаем загрузку
     if (mounted) {
       setState(() => _isLoading = false);
     }
   }
 
+  // Форматирование даты
   String _formatDate(String isoDate) {
     if (isoDate.isEmpty) return '';
+    if (isoDate.contains('.')) return isoDate;
+
     try {
       final parts = isoDate.split('-');
       if (parts.length == 3) {
@@ -186,7 +188,7 @@ class _LoadScreenState extends State<LoadScreen> {
               final currentMonth = months[now.month - 1];
               final currentMonthNumber = now.month.toString();
               final dayData = _loadDays!.firstWhere((d) => d.day == day, orElse: () => LoadDay(day: day, level: 4, isEditing: false));
-
+              AppLogger.info('Переход на день $day', tag: '[UI] LoadScreen');
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -197,7 +199,7 @@ class _LoadScreenState extends State<LoadScreen> {
                     monthNumber: currentMonthNumber,
                     className: widget.className,
                     classId: widget.classId,
-                    dayLevel: dayData.level,
+                    dayLevel: dayData.level ?? 4,
                     onGoToClasses: widget.onGoToClasses,
                     onGoToSummary: widget.onGoToSummary,
                   ),
@@ -206,7 +208,32 @@ class _LoadScreenState extends State<LoadScreen> {
             },
           ),
           SizedBox(height: 11.fh),
-          if (widget.isTeacher && _recommendation != null) RecommendationsBlock(daysToReduce: _recommendation!.daysToReduce, daysToMoveTo: _recommendation!.daysToMoveTo),
+
+          // Блок рекомендаций
+          if (widget.isTeacher && _recommendation != null) ...[
+            if (_recommendation!.analysisStatus == 'running' || _recommendation!.analysisStatus == 'queued')
+              Padding(
+                padding: po(b: 11.fh),
+                child: Center(
+                  child: Text(
+                    'ИИ анализирует данные...',
+                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 12.fh, color: text),
+                  ),
+                ),
+              )
+            else if (_recommendation!.analysisStatus == 'failed')
+              Padding(
+                padding: po(b: 11.fh),
+                child: Center(
+                  child: Text(
+                    'Не удалось получить рекомендации ИИ',
+                    style: TextStyle(fontFamily: 'SF Pro', fontSize: 12.fh, color: text),
+                  ),
+                ),
+              )
+            else if (_recommendation!.daysToReduce.isNotEmpty || _recommendation!.daysToMoveTo.isNotEmpty)
+              RecommendationsBlock(daysToReduce: _recommendation!.daysToReduce, daysToMoveTo: _recommendation!.daysToMoveTo),
+          ],
         ],
       ),
     );

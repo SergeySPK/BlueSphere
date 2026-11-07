@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
-// Экран обработок исключений
+// Экран для отображения ошибок сети и авторизации
 class ErrorScreen extends StatelessWidget {
-  final int code;
+  final int code; // HTTP-код ошибки
 
   const ErrorScreen({super.key, required this.code});
 
@@ -35,7 +35,6 @@ class ErrorScreen extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(fontFamily: 'SF Pro', fontSize: 15.fh, color: grey, fontWeight: .w400),
             ),
-
             SizedBox(height: 14.fh),
             Text(
               'ERROR CODE $code',
@@ -47,6 +46,7 @@ class ErrorScreen extends StatelessWidget {
     );
   }
 
+  // Возвращает иконку в зависимости от кода ошибки
   IconData _getIcon(int code) {
     switch (code) {
       case 401:
@@ -63,6 +63,7 @@ class ErrorScreen extends StatelessWidget {
   }
 }
 
+// Возвращает заголовок для конкретной ошибки
 String _getTitle(int code) {
   switch (code) {
     case 401:
@@ -78,6 +79,7 @@ String _getTitle(int code) {
   }
 }
 
+// Возвращает подробное описание для конкретной ошибки
 String _getDescription(int code) {
   switch (code) {
     case 401:

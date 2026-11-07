@@ -2,20 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
 
-// Контейнер с результатами опроса
+// Модель для одного варианта ответа в опросе
 class SurveyResultItem {
-  final String label;
-  final int percentage;
-  final bool isHighlighted;
+  final String label; // Текст варианта
+  final int percentage; // Процент ответивших
+  final bool isHighlighted; // Нужно ли подсветить этот вариант
 
   SurveyResultItem({required this.label, required this.percentage, this.isHighlighted = false});
 }
 
+// Виджет с результатами опроса
 class SurveyResultsCard extends StatelessWidget {
-  final String date;
-  final List<SurveyResultItem> generalResults;
-  final List<SurveyResultItem> stressSubjects;
-  final List<SurveyResultItem> easySubjects;
+  final String date; // Дата опроса
+  final List<SurveyResultItem> generalResults; // Общая оценка состояния
+  final List<SurveyResultItem> stressSubjects; // Самые тревожные предметы
+  final List<SurveyResultItem> easySubjects; // Самые легкие предметы
 
   const SurveyResultsCard({super.key, required this.date, required this.generalResults, required this.stressSubjects, required this.easySubjects});
 
@@ -38,6 +39,7 @@ class SurveyResultsCard extends StatelessWidget {
           ),
           SizedBox(height: 13.fh),
           ...generalResults.map((item) => _buildProgressBar(item)),
+
           SizedBox(height: 7.fh),
           Divider(color: text.withOpacity(0.2), height: 1),
           SizedBox(height: 17.fh),
@@ -47,6 +49,7 @@ class SurveyResultsCard extends StatelessWidget {
           ),
           SizedBox(height: 12.fh),
           ...stressSubjects.map((item) => _buildProgressBar(item)),
+
           SizedBox(height: 7.fh),
           Divider(color: text.withOpacity(0.2), height: 1),
           SizedBox(height: 17.fh),
@@ -61,13 +64,15 @@ class SurveyResultsCard extends StatelessWidget {
     );
   }
 
+  // Отрисовка одной полоски прогресса
   Widget _buildProgressBar(SurveyResultItem item) {
+    // Выбираем цвет полоски в зависимости от процента
     Color getBarColor(int percent) {
-      if (percent >= 70) return loadMax; // 80-100%
-      if (percent >= 40) return loadHigh; // 50-79%
-      if (percent >= 20) return loadMedium; // 20-49%
-      if (percent >= 5) return loadLow; // 5-19%
-      return loadMin; // 0-4%
+      if (percent >= 70) return loadMax;
+      if (percent >= 40) return loadHigh;
+      if (percent >= 20) return loadMedium;
+      if (percent >= 5) return loadLow;
+      return loadMin;
     }
 
     final barColor = item.isHighlighted ? loadMax : getBarColor(item.percentage);

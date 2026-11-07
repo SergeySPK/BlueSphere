@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:vize/vize.dart';
 import 'colors.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 // Кастомная нижняя панель навигации
 class BottomNavBar extends StatelessWidget {
-  final int currentIndex;
-  final Function(int) onTap;
-  final bool isTeacher;
+  final int currentIndex; // Индекс текущей активной вкладки
+  final Function(int) onTap; // Колбэк для обработки нажатий на вкладки
+  final bool isTeacher; // Показывать ли вкладку "Классы"
 
   const BottomNavBar({super.key, required this.currentIndex, required this.onTap, required this.isTeacher});
 
@@ -15,9 +15,11 @@ class BottomNavBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final List<BottomNavigationBarItem> items = [];
 
+    // Учителям и админам добавляем вкладку "Классы"
     if (isTeacher) {
       items.add(_buildItem('assets/school.svg', 'Классы'));
     }
+
     items.add(_buildItem('assets/file.svg', 'Нагрузка'));
     items.add(_buildItem('assets/chat.svg', 'Опросы'));
 
@@ -44,6 +46,7 @@ class BottomNavBar extends StatelessWidget {
     );
   }
 
+  // Вспомогательный метод для создания элемента панели с SVG-иконкой
   BottomNavigationBarItem _buildItem(String iconPath, String label) {
     return BottomNavigationBarItem(
       icon: SvgPicture.asset(iconPath, width: 24.fw, height: 24.fh, colorFilter: ColorFilter.mode(text, BlendMode.srcIn)),

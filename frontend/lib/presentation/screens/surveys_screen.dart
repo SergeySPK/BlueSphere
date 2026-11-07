@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import '../../data/api_service.dart';
+import '../../core/logger.dart';
 import '../uikit/colors.dart';
 import '../uikit/custom_header.dart';
 import '../uikit/error_screen.dart';
@@ -8,7 +9,7 @@ import '../uikit/status_banner.dart';
 import '../uikit/class_summary_card.dart';
 import '../uikit/survey_results_card.dart';
 
-// Экран опросов
+// Экран с результатами опросов класса
 class SurveysScreen extends StatefulWidget {
   final String classId;
   final String className;
@@ -55,16 +56,19 @@ class _SurveysScreenState extends State<SurveysScreen> {
     }
   }
 
+  // Загрузка списка опросов и статистики по последнему из них
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
       _errorCode = null;
     });
 
+    AppLogger.info('Начало загрузки данных для опросов (класс: ${widget.classId})', tag: '[UI] Surveys');
+
     try {
-      // Получаем список опросов
       final surveys = await ApiService.getClassSurveys(widget.classId);
       if (surveys.isEmpty) {
+        AppLogger.info('Список опросов пуст', tag: '[UI] Surveys');
         if (mounted) setState(() => _isLoading = false);
         return;
       }
@@ -72,18 +76,19 @@ class _SurveysScreenState extends State<SurveysScreen> {
       final latestSurvey = surveys[0];
       final date = latestSurvey['survey_date'];
       _surveyDate = date;
+      AppLogger.info('Выбран последний опрос на дату: $date', tag: '[UI] Surveys');
 
-      // Запрашиваем статус для баннера
       try {
         final summary = await ApiService.getSummary(widget.classId, date);
         _bannerLevel = summary.hasData ? summary.level : 4;
         _bannerDate = summary.date;
+        AppLogger.info('Баннер для опроса: level=$_bannerLevel, hasData=${summary.hasData}', tag: '[UI] Surveys');
       } catch (e) {
         _bannerLevel = 4;
         _bannerDate = date;
+        AppLogger.error('Не удалось загрузить баннер для опроса', error: e, tag: '[UI] Surveys');
       }
 
-      // Получаем статистику по опросу
       final stats = await ApiService.getSurveyStatistics(widget.classId, date);
       _parseStatistics(stats);
 
@@ -98,6 +103,8 @@ class _SurveysScreenState extends State<SurveysScreen> {
       if (errorString.contains('Exception: ')) {
         code = int.tryParse(errorString.split('Exception: ')[1]) ?? 500;
       }
+      AppLogger.error('Ошибка загрузки данных опросов', error: e, tag: '[UI] Surveys');
+
       if (mounted) {
         setState(() {
           _errorCode = code;
@@ -107,6 +114,7 @@ class _SurveysScreenState extends State<SurveysScreen> {
     }
   }
 
+  // Парсинг статистики из JSON в списки для UI
   void _parseStatistics(Map<String, dynamic> stats) {
     final questions = stats['questions'] as List? ?? [];
 
@@ -125,6 +133,7 @@ class _SurveysScreenState extends State<SurveysScreen> {
         return SurveyResultItem(label: optTitle, percentage: percent, isHighlighted: percent > 50);
       }).toList();
 
+      // Распределяем вопросы по категориям
       if (title.contains('общая оценка') || title.contains('состояние')) {
         _generalResults = parsedOptions;
       } else if (title.contains('тревожно') || title.contains('стресс') || title.contains('сложн')) {
@@ -135,18 +144,27 @@ class _SurveysScreenState extends State<SurveysScreen> {
     }
   }
 
-  // Вспомогательные функции для карточки
+  // Получение самого частого ответа
   String _getTopSubject(List<SurveyResultItem> items) {
     if (items.isEmpty) return 'Нет данных';
     final top = items.reduce((a, b) => a.percentage > b.percentage ? a : b);
     return top.percentage > 0 ? top.label : 'Нет ответов';
   }
 
+  // Получение текстового статуса
   String _getGeneralStatus() {
     if (_generalResults.isEmpty) return 'НЕТ ДАННЫХ';
     final top = _generalResults.reduce((a, b) => a.percentage > b.percentage ? a : b);
     if (top.percentage == 0) return 'НЕТ ДАННЫХ';
-    return top.label.toUpperCase();
+
+    final label = top.label.toLowerCase();
+    if (label.contains('отлично')) return 'ОТЛИЧНОЕ СОСТОЯНИЕ';
+    if (label.contains('хорошо')) return 'ХОРОШЕЕ СОСТОЯНИЕ';
+    if (label.contains('удовлетворительно') && !label.contains('не')) return 'УДОВЛЕТВОРИТЕЛЬНОЕ СОСТОЯНИЕ';
+    if (label.contains('неудовлетворительно')) return 'НЕУДОВЛЕТВОРИТЕЛЬНОЕ СОСТОЯНИЕ';
+    if (label.contains('плохо')) return 'ПЛОХОЕ СОСТОЯНИЕ';
+
+    return '${top.label.toUpperCase()} СОСТОЯНИЕ';
   }
 
   int _getTopPercentage(List<SurveyResultItem> items) {
@@ -154,8 +172,11 @@ class _SurveysScreenState extends State<SurveysScreen> {
     return items.reduce((a, b) => a.percentage > b.percentage ? a : b).percentage;
   }
 
+  // Форматирование даты
   String _formatDate(String isoDate) {
     if (isoDate.isEmpty) return '';
+    if (isoDate.contains('.')) return isoDate;
+
     try {
       final parts = isoDate.split('-');
       if (parts.length == 3) {
