@@ -1,215 +1,201 @@
+import argparse
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
-# Добавляем папку backend в пути поиска модулей Python.
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(BACKEND_DIR))
-
-import argparse
-from datetime import date, timedelta
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 from sqlalchemy import select
 
 from database import SessionLocal, engine
-from scripts.user_mode import validate_database_mode
 from models import (
     AcademicYear,
+    AIDailyForecast,
     Class,
     Schedule,
     School,
     Subject,
     Teacher,
+    TeacherClassAccess,
     TeachingAssignment,
-    User,
 )
+from user_mode import validate_database_mode
+
 
 SCHOOL_SHORT_NAME = "Школа № 1"
 ACADEMIC_YEAR_NAME = "2026-2027"
 
-TEACHERS_DATA = [
-    ("demo-teacher-1", "Сидоров Сергей Сергеевич"),
-    ("demo-teacher-2", "Петров Павел Петрович"),
-    ("demo-teacher-3", "Кузнецова Ольга Константиновна"),
-    ("demo-teacher-4", "Иванов Иван Иванович"),
-    ("demo-teacher-5", "Смирнова Анна Андреевна"),
-    ("demo-teacher-6", "Батонова Ирина Александровна"),
-]
+DEFAULT_START_DATE = date(2026, 11, 1)
+DEFAULT_END_DATE = date(2026, 12, 31)
 
 SUBJECT_NAMES = [
-    "Физкультура",
-    "История",
     "Русский язык",
+    "Литература",
     "Математика",
+    "Алгебра",
+    "Геометрия",
+    "История",
+    "Обществознание",
     "Английский язык",
+    "Биология",
+    "География",
+    "Физика",
+    "Химия",
 ]
 
-LESSON_DETAILS = {
-    "Физкультура": ("demo-teacher-1", "Спортзал", "Сдача нормативов"),
-    "История": ("demo-teacher-2", "204", "Обычный урок"),
-    "Русский язык": (
-        "demo-teacher-3",
-        "301",
-        "Входная контрольная работа",
-    ),
-    "Математика": ("demo-teacher-4", "302", "Проверочная работа"),
-}
-
-ENGLISH_ROOMS = {1: "108", 2: "109"}
-
-BASE_SUBJECTS = [
-    "Русский язык",
-    "Математика",
-    "История",
-    "Английский язык",
-    "Физкультура",
+LESSON_TYPES = [
+    "Обычный урок",
+    "Практическая работа",
+    "Самостоятельная работа",
+    "Проверочная работа",
+    "Контрольная работа",
+    "Лабораторная работа",
+    "Подготовка к контрольной работе",
 ]
 
-# Сохраняем последовательность уроков за 9 сентября.
-EXISTING_PLANS = {
-    "5a": [
-        ("Физкультура", 1),
-        ("История", 2),
-        ("Русский язык", 3),
-        ("Математика", 4),
-        ("Английский язык", 5),
-    ],
-    "5b": [
-        ("История", 1),
-        ("Русский язык", 2),
-        ("Математика", 3),
-        ("Английский язык", 4),
-        ("Физкультура", 5),
-    ],
-    "5v": [
-        ("Русский язык", 1),
-        ("Математика", 2),
-        ("Английский язык", 3),
-        ("Физкультура", 4),
-        ("История", 5),
-    ],
-}
+ROOMS = [
+    "101", "102", "103", "104",
+    "201", "202", "203", "204",
+    "301", "302", "303", "304",
+]
+
+
+def parse_iso_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"Некорректная дата: {value!r}. "
+            "Используй формат YYYY-MM-DD."
+        )
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Заполнение расписания за указанный период."
+        description=(
+            "Создание тестового расписания и Python-прогнозов "
+            "за указанный период."
+        )
     )
 
     parser.add_argument(
         "--start-date",
-        type=date.fromisoformat,
-        required=True,
-        help="Начальная дата в формате YYYY-MM-DD",
+        type=parse_iso_date,
+        default=DEFAULT_START_DATE,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Начало периода генерации расписания. "
+            "По умолчанию: 2026-11-01."
+        ),
     )
 
     parser.add_argument(
         "--end-date",
-        type=date.fromisoformat,
-        required=True,
-        help="Конечная дата в формате YYYY-MM-DD",
+        type=parse_iso_date,
+        default=DEFAULT_END_DATE,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Конец периода генерации расписания. "
+            "По умолчанию: 2026-12-31."
+        ),
     )
 
     args = parser.parse_args()
 
     if args.start_date > args.end_date:
-        parser.error("--start-date не может быть позже --end-date")
+        parser.error(
+            "--start-date не может быть позже --end-date."
+        )
 
     return args
 
 
-def get_lesson_dates(start_date, end_date):
-    return [
-        start_date + timedelta(days=offset)
-        for offset in range((end_date - start_date).days + 1)
-        if (start_date + timedelta(days=offset)).weekday() < 5
-    ]
+def lesson_dates(start_date, end_date):
+    current = start_date
+    result = []
+
+    while current <= end_date:
+        if current.weekday() < 5:
+            result.append(current)
+        current += timedelta(days=1)
+
+    return result
 
 
-def make_lesson_plan(class_code, lesson_date):
-    if lesson_date == date(2026, 9, 9) and class_code in EXISTING_PLANS:
-        return EXISTING_PLANS[class_code]
-
-    grade = int("".join(char for char in class_code if char.isdigit()))
-    parallel = class_code[-1]
+def parse_class_code(code):
+    grade_text = "".join(char for char in code if char.isdigit())
+    parallel = code[-1].lower()
 
     parallel_index = {
         "a": 0,
         "b": 1,
         "v": 2,
         "g": 3,
-    }.get(parallel, 0)
+    }
 
-    # Меняем порядок предметов между классами и датами.
-    shift = (grade + parallel_index + lesson_date.day) % len(BASE_SUBJECTS)
-    subjects = BASE_SUBJECTS[shift:] + BASE_SUBJECTS[:shift]
+    if not grade_text or parallel not in parallel_index:
+        raise ValueError(f"Неизвестный код класса: {code}")
 
-    return [(subject, number) for number, subject in enumerate(subjects, 1)]
-
-
-def get_or_create_teacher(session, school, sferum_id, full_name):
-    user = session.scalar(select(User).where(User.sferum_id == sferum_id))
-
-    if user is None:
-        user = User(
-            sferum_id=sferum_id,
-            full_name=full_name,
-        )
-        session.add(user)
-        session.flush()
-
-    teacher = session.scalar(
-        select(Teacher).where(
-            Teacher.user_id == user.id,
-            Teacher.school_id == school.id,
-        )
-    )
-
-    if teacher is None:
-        teacher = Teacher(
-            user_id=user.id,
-            school_id=school.id,
-        )
-        session.add(teacher)
-        session.flush()
-
-    return teacher
+    return int(grade_text), parallel_index[parallel]
 
 
-def get_or_create_subject(session, school, name):
-    subject = session.scalar(
-        select(Subject).where(
-            Subject.school_id == school.id,
-            Subject.name == name,
-        )
-    )
+def make_plan(school_class, lesson_date):
+    grade, parallel_index = parse_class_code(school_class.code)
 
-    if subject is None:
-        subject = Subject(
-            school_id=school.id,
-            name=name,
-        )
-        session.add(subject)
-        session.flush()
+    # От 3 до 7 уроков в зависимости от класса и даты.
+    lesson_count = 3 + (
+        grade * 3 + parallel_index * 2 + lesson_date.day
+    ) % 5
 
-    return subject
+    shift = (
+        grade + parallel_index + lesson_date.timetuple().tm_yday
+    ) % len(SUBJECT_NAMES)
+
+    rotated = SUBJECT_NAMES[shift:] + SUBJECT_NAMES[:shift]
+
+    plan = []
+    for lesson_number in range(1, lesson_count + 1):
+        subject_index = (lesson_number - 1) % len(rotated)
+        subject_name = rotated[subject_index]
+
+        type_index = (
+            grade * 7
+            + parallel_index * 3
+            + lesson_date.day
+            + lesson_number
+        ) % len(LESSON_TYPES)
+
+        lesson_type = LESSON_TYPES[type_index]
+
+        # У части классов контрольные и проверочные распределены
+        # по разным дням, чтобы получить неодинаковые профили нагрузки.
+        if (
+            lesson_number in {2, 3}
+            and (grade + parallel_index + lesson_date.day) % 7 == 0
+        ):
+            lesson_type = "Контрольная работа"
+
+        plan.append((subject_name, lesson_number, lesson_type))
+
+    return plan
 
 
 def get_or_create_assignment(
     session,
-    teacher,
     school_class,
-    subject,
     academic_year,
-    subgroup,
+    subject,
+    teacher,
 ):
     assignment = session.scalar(
         select(TeachingAssignment).where(
-            TeachingAssignment.school_id == school_class.school_id,
             TeachingAssignment.teacher_id == teacher.id,
             TeachingAssignment.class_id == school_class.id,
             TeachingAssignment.subject_id == subject.id,
             TeachingAssignment.academic_year_id == academic_year.id,
-            TeachingAssignment.subgroup == subgroup,
+            TeachingAssignment.subgroup == 0,
         )
     )
 
@@ -220,170 +206,147 @@ def get_or_create_assignment(
             class_id=school_class.id,
             subject_id=subject.id,
             academic_year_id=academic_year.id,
-            subgroup=subgroup,
+            subgroup=0,
         )
         session.add(assignment)
         session.flush()
 
-    return assignment
-
-
-def get_or_create_lesson(
-    session,
-    assignment,
-    lesson_date,
-    lesson_number,
-    room,
-    lesson_type,
-):
-    lesson = session.scalar(
-        select(Schedule).where(
-            Schedule.assignment_id == assignment.id,
-            Schedule.date == lesson_date,
-            Schedule.lesson_number == lesson_number,
+    access = session.scalar(
+        select(TeacherClassAccess.id).where(
+            TeacherClassAccess.teacher_id == teacher.id,
+            TeacherClassAccess.class_id == school_class.id,
         )
     )
 
-    if lesson is None:
-        lesson = Schedule(
-            assignment_id=assignment.id,
-            date=lesson_date,
-            lesson_number=lesson_number,
-            room=room,
-            lesson_type=lesson_type,
+    if access is None:
+        session.add(
+            TeacherClassAccess(
+                teacher_id=teacher.id,
+                class_id=school_class.id,
+                school_id=school_class.school_id,
+                academic_year_id=academic_year.id,
+            )
         )
-        session.add(lesson)
-        session.flush()
-        return True
 
-    # Существующую запись не перезаписываем.
-    return False
+    return assignment
 
 
 def seed_schedule(start_date, end_date):
     validate_database_mode(engine)
 
-    lesson_dates = get_lesson_dates(start_date, end_date)
-
-    if not lesson_dates:
+    dates = lesson_dates(start_date, end_date)
+    if not dates:
         raise ValueError("В указанном диапазоне нет будних дней.")
 
     with SessionLocal() as session:
-        school = session.scalar(
-            select(School).where(School.short_name == SCHOOL_SHORT_NAME)
-        )
-
-        if school is None:
-            raise RuntimeError("Сначала запусти seed.py: школа не найдена.")
-
-        academic_year = session.scalar(
-            select(AcademicYear).where(
-                AcademicYear.school_id == school.id,
-                AcademicYear.name == ACADEMIC_YEAR_NAME,
+        try:
+            school = session.scalar(
+                select(School).where(
+                    School.short_name == SCHOOL_SHORT_NAME
+                )
             )
-        )
+            if school is None:
+                raise RuntimeError("Сначала запусти scripts/seed.py.")
 
-        if academic_year is None:
-            raise RuntimeError("Сначала запусти seed.py: учебный год не найден.")
-
-        if not academic_year.is_active:
-            raise RuntimeError(
-                f"Учебный год {academic_year.name} не является активным."
+            academic_year = session.scalar(
+                select(AcademicYear).where(
+                    AcademicYear.school_id == school.id,
+                    AcademicYear.name == ACADEMIC_YEAR_NAME,
+                )
             )
-
-        classes = session.scalars(
-            select(Class)
-            .where(
-                Class.school_id == school.id,
-                Class.academic_year_id == academic_year.id,
-            )
-            .order_by(Class.code)
-        ).all()
-
-        if not classes:
-            raise RuntimeError("Классы не найдены. Сначала запусти seed.py.")
-
-        # Создаём или получаем преподавателей и предметы.
-        teachers = {
-            sferum_id: get_or_create_teacher(
-                session,
-                school,
-                sferum_id,
-                full_name,
-            )
-            for sferum_id, full_name in TEACHERS_DATA
-        }
-
-        subjects = {
-            name: get_or_create_subject(session, school, name) for name in SUBJECT_NAMES
-        }
-
-        # Создаём назначения заранее: по одному на класс,
-        # предмет и подгруппу, а не для каждого отдельного урока.
-        assignments = {}
-
-        for school_class in classes:
-            for subject_name in BASE_SUBJECTS:
-                subject = subjects[subject_name]
-
-                subgroups = (1, 2) if subject_name == "Английский язык" else (0,)
-
-                for subgroup in subgroups:
-                    if subject_name == "Английский язык":
-                        teacher_key = (
-                            "demo-teacher-5" if subgroup == 1 else "demo-teacher-6"
-                        )
-                    else:
-                        teacher_key = LESSON_DETAILS[subject_name][0]
-
-                    assignment = get_or_create_assignment(
-                        session,
-                        teachers[teacher_key],
-                        school_class,
-                        subject,
-                        academic_year,
-                        subgroup,
-                    )
-
-                    assignments[(school_class.id, subject_name, subgroup)] = assignment
-
-        # Загружаем существующие уроки одним запросом.
-        assignment_ids = [assignment.id for assignment in assignments.values()]
-
-        existing_lessons = session.scalars(
-            select(Schedule).where(
-                Schedule.assignment_id.in_(assignment_ids),
-                Schedule.date >= start_date,
-                Schedule.date <= end_date,
-            )
-        ).all()
-
-        existing_keys = {
-            (
-                lesson.assignment_id,
-                lesson.date,
-                lesson.lesson_number,
-            )
-            for lesson in existing_lessons
-        }
-
-        # Формируем новые уроки в памяти.
-        new_lessons = []
-        existing_count = 0
-
-        for lesson_date in lesson_dates:
-            for school_class in classes:
-                plan = make_lesson_plan(
-                    school_class.code,
-                    lesson_date,
+            if academic_year is None or not academic_year.is_active:
+                raise RuntimeError(
+                    "Не найден активный учебный год 2026-2027."
                 )
 
-                for subject_name, lesson_number in plan:
-                    subgroups = (1, 2) if subject_name == "Английский язык" else (0,)
+            classes = session.scalars(
+                select(Class)
+                .where(
+                    Class.school_id == school.id,
+                    Class.academic_year_id == academic_year.id,
+                )
+                .order_by(Class.code)
+            ).all()
 
-                    for subgroup in subgroups:
+            teachers = session.scalars(
+                select(Teacher)
+                .where(Teacher.school_id == school.id)
+                .order_by(Teacher.id)
+            ).all()
+
+            subjects = session.scalars(
+                select(Subject)
+                .where(Subject.school_id == school.id)
+            ).all()
+
+            if len(classes) != 44:
+                raise RuntimeError(
+                    f"Ожидалось 44 класса, найдено {len(classes)}."
+                )
+            if len(teachers) != 12:
+                raise RuntimeError(
+                    f"Ожидалось 12 учителей, найдено {len(teachers)}."
+                )
+
+            subjects_by_name = {item.name: item for item in subjects}
+            missing_subjects = set(SUBJECT_NAMES) - set(subjects_by_name)
+            if missing_subjects:
+                raise RuntimeError(
+                    f"Не найдены предметы: {sorted(missing_subjects)}"
+                )
+
+            assignments = {}
+            for school_class in classes:
+                for subject_index, subject_name in enumerate(SUBJECT_NAMES):
+                    teacher = teachers[subject_index]
+                    subject = subjects_by_name[subject_name]
+
+                    assignments[(school_class.id, subject_name)] = (
+                        get_or_create_assignment(
+                            session,
+                            school_class,
+                            academic_year,
+                            subject,
+                            teacher,
+                        )
+                    )
+
+            assignment_ids = [
+                assignment.id
+                for assignment in assignments.values()
+            ]
+
+            existing_lessons = session.scalars(
+                select(Schedule).where(
+                    Schedule.assignment_id.in_(assignment_ids),
+                    Schedule.date >= start_date,
+                    Schedule.date <= end_date,
+                )
+            ).all()
+
+            existing_keys = {
+                (
+                    item.assignment_id,
+                    item.date,
+                    item.lesson_number,
+                )
+                for item in existing_lessons
+            }
+
+            new_lessons = []
+            lesson_dates_by_class = {}
+
+            for lesson_date in dates:
+                for class_index, school_class in enumerate(classes):
+                    plan = make_plan(school_class, lesson_date)
+                    lesson_dates_by_class.setdefault(
+                        school_class.id,
+                        set(),
+                    ).add(lesson_date)
+
+                    for subject_name, lesson_number, lesson_type in plan:
                         assignment = assignments[
-                            (school_class.id, subject_name, subgroup)
+                            (school_class.id, subject_name)
                         ]
 
                         key = (
@@ -391,41 +354,93 @@ def seed_schedule(start_date, end_date):
                             lesson_date,
                             lesson_number,
                         )
-
                         if key in existing_keys:
-                            existing_count += 1
                             continue
 
-                        if subject_name == "Английский язык":
-                            room = ENGLISH_ROOMS[subgroup]
-                            lesson_type = "Обычный урок"
-                        else:
-                            _, room, lesson_type = LESSON_DETAILS[subject_name]
+                        room_index = (
+                            class_index + lesson_number
+                        ) % len(ROOMS)
 
                         new_lessons.append(
                             Schedule(
                                 assignment_id=assignment.id,
                                 date=lesson_date,
                                 lesson_number=lesson_number,
-                                room=room,
+                                room=ROOMS[room_index],
                                 lesson_type=lesson_type,
                             )
                         )
-
                         existing_keys.add(key)
 
-        # Сохраняем все новые уроки одним пакетом.
-        session.add_all(new_lessons)
-        session.commit()
+            session.add_all(new_lessons)
+            session.flush()
 
-        print("Демонстрационное расписание подготовлено.")
-        print(f"Школа: {school.short_name}")
-        print(f"Учебный год: {academic_year.name}")
-        print(f"Запрошенный период: {start_date} — {end_date}")
-        print(f"Будних дней: {len(lesson_dates)}")
-        print(f"Классов обработано: {len(classes)}")
-        print(f"Новых записей расписания: {len(new_lessons)}")
-        print(f"Уже существующих записей пропущено: {existing_count}")
+            # Заполняем только будущие даты. Сегодня и прошедшие даты
+            # не меняем. День без уроков не получает прогноз.
+            today = date.today()
+            forecast_created = 0
+            forecast_existing = 0
+
+            for school_class in classes:
+                grade, parallel_index = parse_class_code(
+                    school_class.code
+                )
+
+                scheduled_dates = lesson_dates_by_class.get(
+                    school_class.id,
+                    set(),
+                )
+
+                for target_date in sorted(scheduled_dates):
+                    if target_date <= today:
+                        continue
+
+                    existing_forecast = session.scalar(
+                        select(AIDailyForecast).where(
+                            AIDailyForecast.class_id == school_class.id,
+                            AIDailyForecast.date == target_date,
+                        )
+                    )
+
+                    if existing_forecast is not None:
+                        forecast_existing += 1
+                        continue
+
+                    # Детерминированно распределяем значения 0–4.
+                    # Значение 0 означает перегрузку, 4 — лёгкий день.
+                    level = (
+                        grade
+                        + parallel_index * 2
+                        + target_date.day
+                        + target_date.month
+                    ) % 5
+
+                    session.add(
+                        AIDailyForecast(
+                            class_id=school_class.id,
+                            date=target_date,
+                            level=level,
+                            source="python",
+                            analysis_run_id=None,
+                        )
+                    )
+                    forecast_created += 1
+
+            session.commit()
+
+            print("Расписание подготовлено.")
+            print(f"Период: {start_date} — {end_date}")
+            print(f"Классов: {len(classes)}")
+            print(f"Учителей: {len(teachers)}")
+            print(f"Предметов: {len(subjects_by_name)}")
+            print(f"Будних дней: {len(dates)}")
+            print(f"Новых уроков: {len(new_lessons)}")
+            print(f"Новых Python-прогнозов: {forecast_created}")
+            print(f"Существующих прогнозов пропущено: {forecast_existing}")
+
+        except Exception:
+            session.rollback()
+            raise
 
 
 if __name__ == "__main__":

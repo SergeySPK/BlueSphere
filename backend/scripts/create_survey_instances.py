@@ -1,216 +1,376 @@
 """Создание экземпляров опроса на указанную дату.
 
-По умолчанию работает в режиме предварительного просмотра.
-Для записи в БД необходимо явно указать --create.
+Вопросы и варианты берутся исключительно из активных шаблонов,
+а экземпляры создаются штатным survey_instance_service.
+
+Без --create выполняется только предварительный просмотр.
+--seed-responses создаёт обобщённые ответы учеников по фактической
+структуре экземпляров и закрывает исторические опросы.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import random
 import sys
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from sqlalchemy import select
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-# Позволяет запускать файл из backend/scripts.
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(BACKEND_DIR))
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
-from user_mode import validate_database_mode
-from database import engine, SessionLocal
-from models import SurveyQuestion, SurveyInstance
+from database import SessionLocal, engine
+from models import (
+    StudentEnrollment,
+    SurveyInstance,
+    SurveyInstanceOption,
+    SurveyInstanceQuestion,
+    SurveyResponse,
+    SurveyResponseOption,
+)
 from survey_instance_service import (
     create_survey_instances_for_date,
     get_classes_with_schedule,
-    prepare_question_options,
 )
-
-NO_SUBJECT_OPTION = "Никакой"
+from user_mode import validate_database_mode
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Предварительный просмотр или создание экземпляров опроса."
+        description="Создание экземпляров опроса на указанную дату."
     )
     parser.add_argument(
         "--date",
         required=True,
-        help="Дата опроса в формате ГГГГ-ММ-ДД, например 2026-10-30.",
+        type=date.fromisoformat,
+        help="Дата опроса в формате YYYY-MM-DD.",
     )
     parser.add_argument(
         "--create",
         action="store_true",
-        help="Записать экземпляры опроса в базу. Без этого флага только предпросмотр.",
+        help="Создать экземпляры. Без флага выполняется предпросмотр.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--seed-responses",
+        action="store_true",
+        help=(
+            "Создать ответы учеников и закрыть опросы. "
+            "Используется для подготовки исторических данных."
+        ),
+    )
+
+    args = parser.parse_args()
+
+    if args.seed_responses and not args.create:
+        parser.error("--seed-responses требует указать --create.")
+
+    return args
+
+
+def get_enrolled_student_ids(
+    session: Session,
+    class_id: int,
+    survey_date: date,
+) -> list[int]:
+    """Ученики с единственным действующим зачислением в этот класс на дату."""
+
+    active_enrollments = (
+        select(
+            StudentEnrollment.student_id,
+            func.count(StudentEnrollment.id).label("enrollment_count"),
+            func.min(StudentEnrollment.class_id).label("enrolled_class_id"),
+        )
+        .where(
+            StudentEnrollment.start_date <= survey_date,
+            (
+                StudentEnrollment.end_date.is_(None)
+                | (StudentEnrollment.end_date >= survey_date)
+            ),
+        )
+        .group_by(StudentEnrollment.student_id)
+        .subquery()
+    )
+
+    rows = session.execute(
+        select(active_enrollments.c.student_id).where(
+            active_enrollments.c.enrollment_count == 1,
+            active_enrollments.c.enrolled_class_id == class_id,
+        )
+    )
+
+    return sorted(row.student_id for row in rows)
+
+
+def make_answer_options(
+    instance_question: SurveyInstanceQuestion,
+    options: list[SurveyInstanceOption],
+    student_id: int,
+    survey_date: date,
+) -> list[SurveyInstanceOption]:
+    """Выбирает допустимые варианты, не предполагая содержание вопроса."""
+
+    if instance_question.answer_type not in {"single", "multiple"}:
+        raise ValueError(
+            f"Вопрос ID {instance_question.id} имеет неподдерживаемый "
+            f"тип ответа {instance_question.answer_type!r}."
+        )
+
+    if not options:
+        raise ValueError(
+            f"У вопроса экземпляра ID {instance_question.id} нет вариантов."
+        )
+
+    min_answer = instance_question.min_answer
+    max_answer = instance_question.max_answer
+
+    if min_answer < 1 or max_answer < min_answer:
+        raise ValueError(
+            f"У вопроса экземпляра ID {instance_question.id} "
+            "некорректные ограничения min_answer/max_answer."
+        )
+
+    if instance_question.answer_type == "single":
+        if min_answer != 1 or max_answer != 1:
+            raise ValueError(
+                f"У одиночного вопроса ID {instance_question.id} "
+                "ограничения должны быть равны 1."
+            )
+        max_answer = 1
+
+    if max_answer > len(options):
+        raise ValueError(
+            f"У вопроса экземпляра ID {instance_question.id} "
+            f"max_answer={max_answer}, но вариантов только {len(options)}."
+        )
+
+    exclusive = [option for option in options if option.is_exclusive]
+    regular = [option for option in options if not option.is_exclusive]
+
+    if len(exclusive) > 1:
+        raise ValueError(
+            f"У вопроса экземпляра ID {instance_question.id} "
+            "обнаружено несколько исключительных вариантов."
+        )
+
+    if len(regular) < min_answer:
+        if min_answer == 1 and exclusive:
+            return [exclusive[0]]
+
+        raise ValueError(
+            f"У вопроса экземпляра ID {instance_question.id} "
+            "недостаточно обычных вариантов для min_answer."
+        )
+
+    seed_text = (
+        f"{survey_date.isoformat()}:{student_id}:{instance_question.id}"
+    )
+    seed = int.from_bytes(
+        hashlib.sha256(seed_text.encode("utf-8")).digest()[:8],
+        byteorder="big",
+    )
+    rng = random.Random(seed)
+
+    # Исключительный вариант может быть выбран только отдельно.
+    if exclusive and min_answer == 1 and rng.random() < 0.15:
+        return [exclusive[0]]
+
+    count = rng.randint(min_answer, min(max_answer, len(regular)))
+
+    if count < min_answer:
+        if min_answer == 1 and exclusive:
+            return [exclusive[0]]
+        raise ValueError(
+            f"Для вопроса экземпляра ID {instance_question.id} "
+            "невозможно сформировать допустимый ответ."
+        )
+
+    return rng.sample(regular, count)
+
+
+def seed_instance_responses(
+    session: Session,
+    instance: SurveyInstance,
+) -> tuple[int, int]:
+    """Создаёт ответы по всем вопросам экземпляра для учеников класса."""
+
+    students = get_enrolled_student_ids(
+        session,
+        class_id=instance.class_id,
+        survey_date=instance.survey_date,
+    )
+
+    questions = session.scalars(
+        select(SurveyInstanceQuestion)
+        .where(SurveyInstanceQuestion.instance_id == instance.id)
+        .order_by(
+            SurveyInstanceQuestion.sort_order,
+            SurveyInstanceQuestion.id,
+        )
+    ).all()
+
+    if not questions:
+        raise ValueError(
+            f"У экземпляра опроса ID {instance.id} нет вопросов."
+        )
+
+    created_count = 0
+    existing_count = 0
+    submitted_at = datetime.now(timezone.utc)
+
+    for question in questions:
+        options = session.scalars(
+            select(SurveyInstanceOption)
+            .where(
+                SurveyInstanceOption.instance_question_id == question.id
+            )
+            .order_by(
+                SurveyInstanceOption.sort_order,
+                SurveyInstanceOption.id,
+            )
+        ).all()
+
+        for student_id in students:
+            existing = session.scalar(
+                select(SurveyResponse.id).where(
+                    SurveyResponse.instance_question_id == question.id,
+                    SurveyResponse.student_id == student_id,
+                )
+            )
+
+            if existing is not None:
+                existing_count += 1
+                continue
+
+            selected_options = make_answer_options(
+                instance_question=question,
+                options=options,
+                student_id=student_id,
+                survey_date=instance.survey_date,
+            )
+
+            response = SurveyResponse(
+                instance_question_id=question.id,
+                student_id=student_id,
+                status="submitted",
+                submitted_at=submitted_at,
+            )
+            session.add(response)
+            session.flush()
+
+            for option in selected_options:
+                session.add(
+                    SurveyResponseOption(
+                        response_id=response.id,
+                        option_id=option.id,
+                        instance_question_id=question.id,
+                    )
+                )
+
+            created_count += 1
+
+    return created_count, existing_count
 
 
 def main() -> int:
-    validate_database_mode(engine)
     args = parse_args()
-
-    try:
-        survey_date = date.fromisoformat(args.date)
-    except ValueError:
-        print("Ошибка: дата должна быть в формате ГГГГ-ММ-ДД.")
-        return 1
+    validate_database_mode(engine)
 
     session: Session = SessionLocal()
 
     try:
-        classes = get_classes_with_schedule(session, survey_date)
+        classes = get_classes_with_schedule(session, args.date)
+
         if not classes:
-            print(f"На {survey_date} не найдено ни одного класса с расписанием.")
+            print(f"На {args.date} нет классов с расписанием.")
             return 0
 
-        questions = session.scalars(
-            select(SurveyQuestion)
-            .where(SurveyQuestion.is_active.is_(True))
-            .order_by(SurveyQuestion.sort_order, SurveyQuestion.id)
-        ).all()
-
-        if not questions:
-            raise ValueError("В базе нет активных шаблонов вопросов.")
-
-        # Сначала проверяем все данные и часовые пояса. До окончания проверки
-        # никаких записей в БД не производится.
-        prepared_classes = []
-        for class_id, class_code, class_name, timezone_name in classes:
-            if not timezone_name:
-                raise ValueError(
-                    f"У школы класса {class_code} (ID {class_id}) не задан часовой пояс."
-                )
-
-            try:
-                school_timezone = ZoneInfo(timezone_name)
-            except ZoneInfoNotFoundError as exc:
-                raise ValueError(
-                    f"Неизвестный часовой пояс {timezone_name!r} "
-                    f"у класса {class_code} (ID {class_id})."
-                ) from exc
-
-            opens_at = datetime.combine(
-                survey_date, time(18, 0), tzinfo=school_timezone
+        existing_count = session.scalar(
+            select(func.count(SurveyInstance.id)).where(
+                SurveyInstance.survey_date == args.date
             )
-            closes_at = datetime.combine(
-                survey_date + timedelta(days=1),
-                time(17, 59),
-                tzinfo=school_timezone,
-            )
+        ) or 0
 
-            existing = session.scalar(
-                select(SurveyInstance.id).where(
-                    SurveyInstance.class_id == class_id,
-                    SurveyInstance.survey_date == survey_date,
-                )
-            )
-
-            prepared_questions = []
-            for question in questions:
-                options = prepare_question_options(
-                    session, question, class_id, survey_date
-                )
-                prepared_questions.append((question, options))
-
-            prepared_classes.append(
-                {
-                    "id": class_id,
-                    "code": class_code,
-                    "name": class_name,
-                    "timezone": timezone_name,
-                    "opens_at": opens_at,
-                    "closes_at": closes_at,
-                    "existing_id": existing,
-                    "questions": prepared_questions,
-                }
-            )
-
-        print(f"Дата опроса: {survey_date}")
-        print(f"Активных шаблонов: {len(questions)}")
-        print(f"Классов с расписанием: {len(prepared_classes)}")
-        print()
-
-        to_create = []
-        for item in prepared_classes:
-            print(
-                f"Класс {item['code']} — {item['name']} "
-                f"(ID {item['id']}, часовой пояс {item['timezone']})"
-            )
-            print(f"  Открытие: {item['opens_at'].isoformat()}")
-            print(f"  Закрытие: {item['closes_at'].isoformat()}")
-
-            if item["existing_id"] is not None:
-                print(
-                    f"  ПРОПУСК: экземпляр уже существует "
-                    f"(ID {item['existing_id']})."
-                )
-                print()
-                continue
-
-            for question, options in item["questions"]:
-                print(
-                    f"  Вопрос {question.sort_order}: {question.title} "
-                    f"[{question.answer_type}, вариантов: {len(options)}]"
-                )
-                for option in options:
-                    suffix = " (исключительный)" if option["is_exclusive"] else ""
-                    print(f"    - {option['title']}{suffix}")
-
-            to_create.append(item)
-            print()
+        print(f"Дата опроса: {args.date}")
+        print(f"Классов с расписанием: {len(classes)}")
+        print(f"Уже существующих экземпляров на эту дату: {existing_count}")
 
         if not args.create:
-            print("РЕЖИМ ПРЕДПРОСМОТРА: база данных не изменялась.")
-            print("Для создания запусти эту же команду с флагом --create.")
-            return 0
-
-        if not to_create:
-            print("Новых экземпляров для создания нет.")
+            print("Предпросмотр завершён. База данных не изменялась.")
+            print("Для создания добавь флаг --create.")
             return 0
 
         result = create_survey_instances_for_date(
             session=session,
-            survey_date=survey_date,
+            survey_date=args.date,
             enforce_time_window=False,
         )
 
-        created_count = len(result["created"])
+        print(f"\nСоздано экземпляров: {len(result['created'])}")
 
         for item in result["created"]:
             print(
-                f"СОЗДАНО: класс {item['class_code']} — "
-                f"{item['class_name']} "
-                f"(экземпляр ID {item['instance_id']})."
+                f"  Создано: {item['class_code']} — {item['class_name']} "
+                f"(ID экземпляра: {item['instance_id']})"
             )
 
         for item in result["skipped"]:
             print(
-                f"ПРОПУСК: класс {item['class_code']} "
-                f"(ID {item['class_id']}): {item['reason']}"
+                f"  Пропуск: {item['class_code']} — {item['reason']}"
             )
 
         for item in result["errors"]:
             if isinstance(item, dict):
                 print(
-                    f"ОШИБКА: класс {item['class_code']} "
-                    f"(ID {item['class_id']}): {item['error']}",
+                    f"  Ошибка класса {item.get('class_code')}: "
+                    f"{item.get('error')}",
                     file=sys.stderr,
                 )
             else:
-                print(f"ОШИБКА: {item}", file=sys.stderr)
+                print(f"  Ошибка: {item}", file=sys.stderr)
 
-        print()
-        print(f"Создано экземпляров: {created_count}")
+        if args.seed_responses:
+            instances = session.scalars(
+                select(SurveyInstance).where(
+                    SurveyInstance.survey_date == args.date
+                )
+            ).all()
+
+            total_created = 0
+            total_existing = 0
+
+            for instance in instances:
+                created, existing = seed_instance_responses(
+                    session,
+                    instance,
+                )
+                total_created += created
+                total_existing += existing
+
+                # Исторические экземпляры закрыты и не должны попадать
+                # в текущий поток прохождения опросов.
+                instance.status = "closed"
+
+            session.commit()
+
+            print("\nИсторические ответы подготовлены.")
+            print(f"Новых ответов: {total_created}")
+            print(f"Уже существующих ответов: {total_existing}")
+            print(f"Закрыто экземпляров: {len(instances)}")
+            print("Уведомления MAX не создавались.")
 
         if result["errors"]:
             return 1
 
+        return 0
+
     except Exception as exc:
         session.rollback()
         print(f"Ошибка: {exc}", file=sys.stderr)
-        print("Изменения этого запуска не сохранены.", file=sys.stderr)
         return 1
     finally:
         session.close()
