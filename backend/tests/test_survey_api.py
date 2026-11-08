@@ -769,3 +769,81 @@ def test_open_survey_without_school_timezone_is_closed_in_api(
 
     assert response.status_code == 200
     assert response.json()[0]["status"] == "closed"
+
+
+def test_teacher_with_assignment_without_class_access_can_access_surveys(
+    survey_test_data,
+    survey_api_client,
+    db_session,
+):
+    data = survey_test_data
+
+    user = User(
+        sferum_id="999999996",
+        full_name="Учитель только с назначением",
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    teacher = Teacher(
+        user_id=user.id,
+        school_id=data["school"].id,
+    )
+    db_session.add(teacher)
+    db_session.flush()
+
+    subject = Subject(
+        school_id=data["school"].id,
+        name="Тестовый предмет",
+    )
+    db_session.add(subject)
+    db_session.flush()
+
+    assignment = TeachingAssignment(
+        school_id=data["school"].id,
+        teacher_id=teacher.id,
+        class_id=data["class"].id,
+        subject_id=subject.id,
+        academic_year_id=data["academic_year"].id,
+        subgroup=0,
+    )
+    db_session.add(assignment)
+    db_session.flush()
+
+    # TeacherClassAccess намеренно не создаём.
+
+    token, _ = main.create_access_token(user)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    school_id = data["school"].id
+    class_code = data["class"].code
+    survey_date = data["instance"].survey_date.isoformat()
+
+    response = survey_api_client.get(
+        f"/api/schools/{school_id}/survey-classes",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "code": class_code,
+            "name": data["class"].name,
+        }
+    ]
+
+    response = survey_api_client.get(
+        f"/api/schools/{school_id}/classes/{class_code}/surveys",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+    response = survey_api_client.get(
+        f"/api/schools/{school_id}/classes/{class_code}/surveys/{survey_date}",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["class_code"] == class_code
