@@ -63,19 +63,26 @@ class _DayDetailsScreenState extends State<DayDetailsScreen> {
     final day = widget.day.toString().padLeft(2, '0');
     final dateStr = '$year-$month-$day';
 
-    AppLogger.info('Загрузка расписания на $dateStr', tag: '[UI] DayDetails');
+    try {
+      AppLogger.info('Загрузка расписания на $dateStr', tag: '[UI] DayDetails');
+      final data = await ApiService.getSchedule(widget.classId, dateStr);
 
-    final data = await ApiService.getSchedule(widget.classId, dateStr);
-
-    if (mounted) {
-      setState(() {
-        if (data.isNotEmpty) {
-          _lessons = data.map((json) => Lesson.fromJson(json)).toList();
-        } else {
-          _lessons = [];
-        }
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          if (data.isNotEmpty) {
+            _lessons = data.map((json) => Lesson.fromJson(json)).toList();
+          } else {
+            _lessons = [];
+          }
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      AppLogger.error('Ошибка загрузки расписания', error: e, tag: '[UI] DayDetails');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Не удалось загрузить расписание. Попробуйте позже.')));
+      }
     }
   }
 
