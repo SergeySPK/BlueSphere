@@ -131,5 +131,14 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  mini-app:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.mini-app
+    container_name: bluesphere-mini-app
+    ports:
+      - "${MINI_APP_PORT:-8080}:80"
+    restart: unless-stopped
+
 volumes:
   postgres_data:
