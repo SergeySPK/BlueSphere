@@ -57,7 +57,7 @@ class StatusBanner extends StatelessWidget {
       padding: pa(10),
       decoration: BoxDecoration(color: white, borderRadius: BorderRadius.circular(12)),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             width: 79.fw,
@@ -65,7 +65,7 @@ class StatusBanner extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.transparent,
               shape: BoxShape.circle,
-              border: Border.all(color: cardColor, width: 4.fw), // Обводка круга
+              border: Border.all(color: cardColor, width: 4.fw),
             ),
             child: Center(
               child: Icon(icon, color: cardColor, size: 50.fh),

@@ -74,8 +74,8 @@ class RecommendationsBlock extends StatelessWidget {
   // Вспомогательный виджет для отрисовки плашки с днем
   Widget _buildDayChip(int day, Color backgroundColor, Color textColor) {
     return Container(
-      width: 30.fw,
-      height: 30.fh,
+      width: 30,
+      height: 30,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: backgroundColor, borderRadius: BorderRadius.circular(5.r)),
       child: Text(

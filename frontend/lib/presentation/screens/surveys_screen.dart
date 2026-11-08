@@ -132,31 +132,42 @@ class _SurveysScreenState extends State<SurveysScreen> {
   // Строим сводку для всех вопросов, кроме первого
   List<SurveyQuestionSummary> _buildQuestionSummaries() {
     if (_surveyQuestions.length <= 1) return [];
+    return _surveyQuestions.asMap().entries.skip(1).map((entry) {
+      final index = entry.key;
+      final question = entry.value;
 
-    return _surveyQuestions.skip(1).map((question) {
-      if (question.options.isEmpty) {
-        return SurveyQuestionSummary(title: question.title, topAnswer: 'Нет ответов');
+      String displayTitle = '';
+      if (index == 1) {
+        displayTitle = 'Самый тревожный урок на сегодня:';
+      } else if (index == 2) {
+        displayTitle = 'Самый легкий урок на сегодня:';
+      } else if (index == 3) {
+        displayTitle = 'Оценка интереса учащихся в сегодняшних уроках';
+      } else {
+        displayTitle = question.title;
       }
+
+      if (question.options.isEmpty) {
+        return SurveyQuestionSummary(title: displayTitle, topAnswer: 'Нет ответов');
+      }
+
       final top = question.options.reduce((a, b) => a.percentage > b.percentage ? a : b);
-      return SurveyQuestionSummary(title: question.title, topAnswer: top.percentage > 0 ? top.label : 'Нет ответов');
+      return SurveyQuestionSummary(title: displayTitle, topAnswer: top.percentage > 0 ? top.label : 'Нет ответов');
     }).toList();
   }
 
   // Получение текстового статуса для главного круга
   String _getGeneralStatus() {
-    if (_surveyQuestions.isEmpty || _surveyQuestions.first.options.isEmpty) return 'Нет результатов';
-
+    if (_surveyQuestions.isEmpty || _surveyQuestions.first.options.isEmpty) return 'НЕТ ДАННЫХ';
     final top = _surveyQuestions.first.options.reduce((a, b) => a.percentage > b.percentage ? a : b);
-    if (top.percentage == 0) return 'Нет результатов';
-
+    if (top.percentage == 0) return 'НЕТ ДАННЫХ';
     final label = top.label.toLowerCase();
-    if (label.contains('отлично')) return 'ОТЛИЧНОЕ СОСТОЯНИЕ';
-    if (label.contains('хорошо')) return 'ХОРОШЕЕ СОСТОЯНИЕ';
-    if (label.contains('удовлетворительно') && !label.contains('не')) return 'УДОВЛЕТВОРИТЕЛЬНОЕ СОСТОЯНИЕ';
-    if (label.contains('неудовлетворительно')) return 'НЕУДОВЛЕТВОРИТЕЛЬНОЕ СОСТОЯНИЕ';
-    if (label.contains('плохо')) return 'ПЛОХОЕ СОСТОЯНИЕ';
-
-    return '${top.label.toUpperCase()} СОСТОЯНИЕ';
+    if (label.contains('отлично')) return 'ОТЛИЧНО';
+    if (label.contains('хорошо')) return 'ХОРОШО';
+    if (label.contains('удовлетворительно') && !label.contains('не')) return 'УДОВЛЕТВОРИТЕЛЬНО';
+    if (label.contains('неудовлетворительно')) return 'НЕУДОВЛЕТВОРИТЕЛЬНО';
+    if (label.contains('плохо')) return 'ПЛОХО';
+    return top.label.toUpperCase();
   }
 
   // Получение процента для главного круга
