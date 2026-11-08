@@ -81,7 +81,7 @@ def make_ai_input() -> AIAnalysisInput:
 
 
 def test_prompt_version_is_defined():
-    assert AI_PROMPT_VERSION == "1.0"
+    assert AI_PROMPT_VERSION == "1.1"
 
 
 def test_system_prompt_contains_main_restrictions():

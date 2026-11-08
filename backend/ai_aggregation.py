@@ -12,6 +12,8 @@ class AggregatedDailyLoad:
     level: int
     source: str
     survey_dates_used: tuple[Date, ...]
+    reduce_load: bool | None
+    suitable_for_moving: bool | None
 
 
 @dataclass(frozen=True)
@@ -150,15 +152,6 @@ def aggregate_period_results(
         result = results_by_date.get(current_date)
 
         if result is None:
-            # Даты без уроков обрабатываются Python.
-            daily_loads.append(
-                AggregatedDailyLoad(
-                    date=current_date,
-                    level=4,
-                    source="python",
-                    survey_dates_used=(),
-                )
-            )
             continue
 
         item = result.daily_loads[0]
@@ -169,13 +162,24 @@ def aggregate_period_results(
                 level=item.level,
                 source="ai",
                 survey_dates_used=tuple(item.survey_dates_used),
+                reduce_load=item.reduce_load,
+                suitable_for_moving=item.suitable_for_moving,
             )
         )
 
-        if item.level in (0, 1):
+        if item.reduce_load is True:
             days_to_reduce.append(current_date.day)
 
-        elif item.level in (3, 4):
+        elif item.reduce_load is None and item.level in (0, 1):
+            days_to_reduce.append(current_date.day)
+
+        if item.suitable_for_moving is True:
+            days_to_move_to.append(current_date.day)
+
+        elif (
+            item.suitable_for_moving is None
+            and item.level in (3, 4)
+        ):
             days_to_move_to.append(current_date.day)
 
         for recommendation in result.recommendations:

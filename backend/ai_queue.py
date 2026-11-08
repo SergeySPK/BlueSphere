@@ -4,7 +4,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from models import AIAnalysisJob
+from models import AIAnalysisJob, AIAnalysisRun
 
 
 def _normalize_now(now: datetime | None = None) -> datetime:
@@ -161,7 +161,7 @@ def claim_next_ai_job(
 
     # Задачи с исчерпанными попытками и истёкшей арендой
     # больше не должны возвращаться в очередь.
-    db.execute(
+    failed_job_ids = db.scalars(
         update(AIAnalysisJob)
         .where(
             AIAnalysisJob.status == "running",
@@ -175,7 +175,26 @@ def claim_next_ai_job(
             last_error="Истекла аренда после исчерпания попыток.",
             updated_at=now,
         )
-    )
+        .returning(AIAnalysisJob.id)
+    ).all()
+
+    if failed_job_ids:
+        db.execute(
+            update(AIAnalysisRun)
+            .where(
+                AIAnalysisRun.job_id.in_(failed_job_ids),
+                AIAnalysisRun.status.in_(("queued", "running")),
+            )
+            .values(
+                status="failed",
+                error_code="LeaseExpired",
+                error_message=(
+                    "Аренда AI-задачи истекла после исчерпания "
+                    "допустимого количества попыток."
+                ),
+                completed_at=now,
+            )
+        )
 
     job = db.scalar(
         select(AIAnalysisJob)

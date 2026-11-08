@@ -17,6 +17,7 @@ from ai_queue import (
 )
 from models import (
     AIAnalysisJob,
+    AIAnalysisRun,
     School,
     AcademicYear,
     Class,
@@ -445,15 +446,33 @@ def test_queue_rejects_naive_datetime(
         )
 
 
+@pytest.mark.parametrize("run_status", ["queued", "running"])
 def test_expired_job_with_exhausted_attempts_becomes_failed(
     db_session,
     survey_test_data,
+    run_status,
 ):
     job = enqueue_test_job(
         db_session,
         survey_test_data,
         max_attempts=1,
     )
+
+    run = AIAnalysisRun(
+        job_id=job.id,
+        school_id=job.school_id,
+        academic_year_id=job.academic_year_id,
+        class_id=job.class_id,
+        scope=job.scope,
+        status=run_status,
+        period_start=job.period_start,
+        period_end=job.period_end,
+        input_hash="test-input-hash",
+        prompt_version="test",
+        schema_version="test",
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(run)
     db_session.flush()
 
     claimed = claim_next_ai_job(
@@ -482,6 +501,13 @@ def test_expired_job_with_exhausted_attempts_becomes_failed(
     assert job.locked_by is None
     assert job.locked_until is None
     assert job.last_error is not None
+
+    db_session.refresh(run)
+
+    assert run.status == "failed"
+    assert run.error_code == "LeaseExpired"
+    assert run.error_message is not None
+    assert run.completed_at is not None
 
 
 def test_two_workers_do_not_claim_same_locked_job(

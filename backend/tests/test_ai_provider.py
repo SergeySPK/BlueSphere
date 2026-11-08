@@ -34,6 +34,60 @@ def provider_config():
     )
 
 
+def test_send_request_treats_token_limit_as_retryable_error(
+    monkeypatch,
+    provider_config,
+):
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return ai_provider.httpx.Response(
+                200,
+                json={
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {
+                                "content": None,
+                                "reasoning": "reasoning output",
+                            },
+                        }
+                    ],
+                    "usage": {
+                        "completion_tokens": 4000,
+                        "completion_tokens_details": {
+                            "reasoning_tokens": 3800,
+                        },
+                    },
+                },
+            )
+
+    monkeypatch.setattr(
+        ai_provider.httpx,
+        "AsyncClient",
+        lambda **kwargs: FakeAsyncClient(),
+    )
+
+    with pytest.raises(
+        AIRetryableError,
+        match="исчерпал лимит токенов",
+    ):
+        asyncio.run(
+            ai_provider._send_request(
+                provider_config.primary,
+                [{"role": "user", "content": "test"}],
+                timeout_seconds=10,
+                max_output_tokens=4000,
+            )
+        )
+
+
 def test_generate_json_with_metadata_uses_primary(
     monkeypatch,
     provider_config,

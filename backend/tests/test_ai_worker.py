@@ -1,11 +1,13 @@
 import asyncio
-from datetime import date, datetime, timedelta, timezone
+import pytest
+from datetime import date, datetime, timedelta, timezone, time
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 import ai_worker
+import scheduler
 from ai_queue import enqueue_ai_job
 from ai_provider import AIRetryableError, AIProviderIdentity
 from ai_schemas import AIAnalysisOutput
@@ -183,7 +185,12 @@ def _create_class_job(db_session):
     }
 
 
-def _make_ai_result(target_date, level):
+def _make_ai_result(
+    target_date,
+    level,
+    reduce_load=None,
+    suitable_for_moving=None,
+):
     """Формирует корректный ответ AI для одной даты."""
 
     return AIAnalysisOutput(
@@ -192,6 +199,8 @@ def _make_ai_result(target_date, level):
                 "date": target_date,
                 "level": level,
                 "survey_dates_used": [],
+                "reduce_load": reduce_load,
+                "suitable_for_moving": suitable_for_moving,
             }
         ],
         recommendations=[],
@@ -203,9 +212,16 @@ def _make_ai_analysis_result(
     level,
     provider="primary.example",
     model="test-model",
+    reduce_load=None,
+    suitable_for_moving=None,
 ):
     return AIAnalysisResult(
-        output=_make_ai_result(target_date, level),
+        output=_make_ai_result(
+            target_date,
+            level,
+            reduce_load=reduce_load,
+            suitable_for_moving=suitable_for_moving,
+        ),
         provider_usages=(
             AIProviderIdentity(
                 provider=provider,
@@ -244,6 +260,8 @@ def test_process_next_ai_job_saves_successful_result(
         return _make_ai_analysis_result(
             source.target_date,
             level=1,
+            reduce_load=True,
+            suitable_for_moving=False,
         )
 
     monkeypatch.setattr(
@@ -296,11 +314,22 @@ def test_process_next_ai_job_saves_successful_result(
     scheduled_date = data["scheduled_date"]
 
     assert [
-        (item.date, item.level, item.source)
+        (
+            item.date,
+            item.level,
+            item.source,
+            item.reduce_load,
+            item.suitable_for_moving,
+        )
         for item in daily_loads
     ] == [
-        (scheduled_date, 1, "ai"),
-        (scheduled_date + timedelta(days=1), 4, "python"),
+        (
+            scheduled_date,
+            1,
+            "ai",
+            True,
+            False,
+        ),
     ]
 
     forecasts = (
@@ -315,12 +344,6 @@ def test_process_next_ai_job_saves_successful_result(
         for item in forecasts
     ] == [
         (scheduled_date, 1, "ai", run.id),
-        (
-            scheduled_date + timedelta(days=1),
-            4,
-            "python",
-            run.id,
-        ),
     ]
 
 
@@ -371,7 +394,6 @@ def test_level_four_with_lessons_is_saved_as_ai_forecast(
         for item in forecasts
     ] == [
         (data["scheduled_date"], 4, "ai"),
-        (data["scheduled_date"] + timedelta(days=1), 4, "python"),
     ]
 
 
@@ -458,7 +480,7 @@ def test_period_without_lessons_does_not_call_ai(
     db_session,
     monkeypatch,
 ):
-    """Если будущих уроков нет, все дни получают Python level 4."""
+    """Если будущих уроков нет, прогнозы не создаются."""
 
     _use_test_session(monkeypatch, db_session)
     _set_ai_config(monkeypatch)
@@ -498,13 +520,7 @@ def test_period_without_lessons_does_not_call_ai(
         .all()
     )
 
-    assert [
-        (item.date, item.level, item.source)
-        for item in forecasts
-    ] == [
-        (data["scheduled_date"], 4, "python"),
-        (data["scheduled_date"] + timedelta(days=1), 4, "python"),
-    ]
+    assert forecasts == []
 
     run = db_session.scalar(
         select(AIAnalysisRun).where(
@@ -685,9 +701,12 @@ def test_school_scope_processes_all_classes(
         .all()
     )
 
-    assert len(loads) == 4
+    assert len(loads) == 2
     assert {item.class_id for item in loads} == class_ids
     assert len(analyzed_dates) == 2
+
+    assert all(item.source == "ai" for item in loads)
+    assert all(item.level == 1 for item in loads)
 
 
 def test_lease_loss_does_not_persist_results(
@@ -890,6 +909,37 @@ def test_persist_success_replaces_previous_results_without_duplicates(
     )
     assert run is not None
 
+    school_today = ai_worker._get_school_local_today(
+        ai_worker._get_school_timezone(
+            db_session,
+            job.school_id,
+        )
+    )
+    stale_future_date = max(
+        target_date + timedelta(days=1),
+        school_today + timedelta(days=2),
+    )
+
+    db_session.add_all(
+        [
+            AIDailyForecast(
+                class_id=class_id,
+                date=stale_future_date,
+                level=1,
+                source="ai",
+                analysis_run_id=run.id,
+            ),
+            AIDailyForecast(
+                class_id=class_id,
+                date=school_today,
+                level=2,
+                source="ai",
+                analysis_run_id=run.id,
+            ),
+        ]
+    )
+    db_session.flush()
+
     first_count = (
         db_session.query(AIDailyLoad)
         .filter_by(
@@ -898,7 +948,7 @@ def test_persist_success_replaces_previous_results_without_duplicates(
         )
         .count()
     )
-    assert first_count == 2
+    assert first_count == 1
 
     saved_job = db_session.get(AIAnalysisJob, job_id)
     saved_job.status = "running"
@@ -932,6 +982,27 @@ def test_persist_success_replaces_previous_results_without_duplicates(
 
     db_session.expire_all()
 
+    stale_forecast = (
+        db_session.query(AIDailyForecast)
+        .filter_by(
+            class_id=class_id,
+            date=stale_future_date,
+        )
+        .one_or_none()
+    )
+    assert stale_forecast is None
+
+    today_forecast = (
+        db_session.query(AIDailyForecast)
+        .filter_by(
+            class_id=class_id,
+            date=school_today,
+        )
+        .one_or_none()
+    )
+    assert today_forecast is not None
+    assert today_forecast.level == 2
+
     loads = (
         db_session.query(AIDailyLoad)
         .filter_by(
@@ -942,15 +1013,11 @@ def test_persist_success_replaces_previous_results_without_duplicates(
         .all()
     )
 
-    assert len(loads) == 2
+    assert len(loads) == 1
 
-    assert loads[0].date == job.period_start
+    assert loads[0].date == target_date
     assert loads[0].level == 3
     assert loads[0].source == "ai"
-
-    assert loads[1].date == job.period_end
-    assert loads[1].level == 4
-    assert loads[1].source == "python"
 
     saved_job = db_session.get(AIAnalysisJob, job_id)
     assert saved_job.status == "succeeded"
@@ -959,6 +1026,148 @@ def test_persist_success_replaces_previous_results_without_duplicates(
 
     assert saved_run.provider == "fallback.example"
     assert saved_run.model == "fallback-model"
+
+
+def test_older_ai_run_does_not_overwrite_newer_forecast(
+    db_session,
+    monkeypatch,
+):
+    """Старый запуск не перезаписывает прогноз нового запуска."""
+    _use_test_session(monkeypatch, db_session)
+
+    data = _create_class_job(db_session)
+
+    old_job = data["job"]
+    class_id = data["class"].id
+    target_date = data["scheduled_date"]
+
+    school_today = ai_worker._get_school_local_today(
+        ai_worker._get_school_timezone(
+            db_session,
+            old_job.school_id,
+        )
+    )
+
+    old_job.analysis_date = school_today
+
+    new_job = enqueue_ai_job(
+        db_session,
+        school_id=old_job.school_id,
+        academic_year_id=old_job.academic_year_id,
+        class_id=class_id,
+        scope="class",
+        analysis_date=school_today + timedelta(days=1),
+        period_start=old_job.period_start,
+        period_end=old_job.period_end,
+        dedupe_key="ai-worker-newer-job",
+        trigger="manual",
+        max_attempts=3,
+    )
+
+    def create_run(job):
+        job.status = "running"
+        job.locked_by = f"worker-{job.id}"
+        job.locked_until = (
+            datetime.now(timezone.utc) + timedelta(minutes=5)
+        )
+
+        run = AIAnalysisRun(
+            job_id=job.id,
+            school_id=job.school_id,
+            academic_year_id=job.academic_year_id,
+            class_id=job.class_id,
+            scope=job.scope,
+            status="running",
+            period_start=job.period_start,
+            period_end=job.period_end,
+            input_hash=f"test-input-{job.id}",
+            prompt_version="test",
+            schema_version="test",
+            started_at=datetime.now(timezone.utc),
+        )
+        db_session.add(run)
+        db_session.flush()
+
+        return run
+
+    old_run = create_run(old_job)
+    new_run = create_run(new_job)
+
+    # Изначально в таблице находится Python-прогноз.
+    db_session.add(
+        AIDailyForecast(
+            class_id=class_id,
+            date=target_date,
+            level=3,
+            source="python",
+            analysis_run_id=None,
+        )
+    )
+    db_session.flush()
+
+    def make_aggregated_result(level):
+        return aggregate_period_results(
+            period_start=old_job.period_start,
+            period_end=old_job.period_end,
+            scheduled_dates=[target_date],
+            day_results=[
+                _make_ai_result(target_date, level),
+            ],
+        )
+
+    # Сначала сохраняем новый запуск с уровнем 1.
+    assert ai_worker._persist_success(
+        job_id=new_job.id,
+        worker_id=f"worker-{new_job.id}",
+        run_id=new_run.id,
+        aggregated_by_class={
+            class_id: make_aggregated_result(1),
+        },
+        provider_name="test-provider",
+        model_name="test-model",
+    ) is True
+
+    db_session.expire_all()
+
+    forecast = (
+        db_session.query(AIDailyForecast)
+        .filter_by(
+            class_id=class_id,
+            date=target_date,
+        )
+        .one()
+    )
+
+    assert forecast.level == 1
+    assert forecast.source == "ai"
+    assert forecast.analysis_run_id == new_run.id
+
+    # Затем с опозданием сохраняем старый запуск с уровнем 3.
+    assert ai_worker._persist_success(
+        job_id=old_job.id,
+        worker_id=f"worker-{old_job.id}",
+        run_id=old_run.id,
+        aggregated_by_class={
+            class_id: make_aggregated_result(3),
+        },
+        provider_name="test-provider",
+        model_name="test-model",
+    ) is True
+
+    db_session.expire_all()
+
+    forecast = (
+        db_session.query(AIDailyForecast)
+        .filter_by(
+            class_id=class_id,
+            date=target_date,
+        )
+        .one()
+    )
+
+    assert forecast.level == 1
+    assert forecast.source == "ai"
+    assert forecast.analysis_run_id == new_run.id
 
 
 def test_summarize_provider_usage_returns_single_provider():
@@ -1288,12 +1497,7 @@ def test_date_that_arrives_during_processing_is_not_analyzed(
         .all()
     )
 
-    assert [
-        (item.date, item.level, item.source)
-        for item in daily_loads
-    ] == [
-        (target_date + timedelta(days=1), 4, "python"),
-    ]
+    assert daily_loads == []
 
     assert all(
         item.date > target_date
@@ -1403,12 +1607,7 @@ def test_persist_success_skips_dates_that_are_no_longer_future(
 
     assert result is True
 
-    assert len(forecast_insert_sql) == 1
-
-    forecast_sql = forecast_insert_sql[0]
-
-    assert forecast_sql.count("clock_timestamp()") == 2
-    assert "now() AT TIME ZONE :school_timezone" not in forecast_sql
+    assert forecast_insert_sql == []
 
     db_session.expire_all()
 
@@ -1494,3 +1693,244 @@ def test_process_next_ai_job_does_not_claim_job_when_ai_is_disabled(
     )
 
     assert result is False
+
+
+def test_persist_today_python_forecast_skips_inactive_academic_year(
+    db_session,
+):
+    data = _create_class_job(db_session)
+
+    target_date = data["scheduled_date"]
+
+    # Урок активного класса.
+    data["schedule"].date = target_date
+
+    # Создаём архивный учебный год той же школы.
+    inactive_year = AcademicYear(
+        school_id=data["school"].id,
+        name="2025–2026",
+        start_date=date(2025, 9, 1),
+        end_date=date(2026, 8, 31),
+        is_active=False,
+    )
+    db_session.add(inactive_year)
+    db_session.flush()
+
+    inactive_class = Class(
+        school_id=data["school"].id,
+        academic_year_id=inactive_year.id,
+        code="archived-class",
+        name="Архивный класс",
+    )
+    db_session.add(inactive_class)
+    db_session.flush()
+
+    inactive_assignment = TeachingAssignment(
+        school_id=data["school"].id,
+        teacher_id=data["teacher"].id,
+        class_id=inactive_class.id,
+        subject_id=data["subject"].id,
+        academic_year_id=inactive_year.id,
+        subgroup=0,
+    )
+    db_session.add(inactive_assignment)
+    db_session.flush()
+
+    db_session.add(
+        Schedule(
+            assignment_id=inactive_assignment.id,
+            date=target_date,
+            lesson_number=1,
+            room="101",
+            lesson_type="Урок",
+        )
+    )
+    db_session.flush()
+
+    school_timezone = ZoneInfo("Asia/Yekaterinburg")
+    local_now = datetime.combine(
+        target_date,
+        time(12, 0),
+        tzinfo=school_timezone,
+    )
+
+    inserted = scheduler.persist_today_python_forecasts(
+        session=db_session,
+        now_utc=local_now.astimezone(timezone.utc),
+    )
+
+    active_forecast = db_session.scalar(
+        select(AIDailyForecast).where(
+            AIDailyForecast.class_id == data["class"].id,
+            AIDailyForecast.date == target_date,
+        )
+    )
+
+    inactive_forecast = db_session.scalar(
+        select(AIDailyForecast).where(
+            AIDailyForecast.class_id == inactive_class.id,
+            AIDailyForecast.date == target_date,
+        )
+    )
+
+    assert inserted == 1
+    assert active_forecast is not None
+    assert active_forecast.source == "python"
+    assert inactive_forecast is None
+
+
+def test_persist_today_python_forecast_does_not_overwrite_ai(
+    db_session,
+):
+    data = _create_class_job(db_session)
+
+    target_date = data["scheduled_date"]
+    data["schedule"].date = target_date
+
+    db_session.add(
+        AIDailyForecast(
+            class_id=data["class"].id,
+            date=target_date,
+            level=3,
+            source="ai",
+        )
+    )
+    db_session.flush()
+
+    school_timezone = ZoneInfo("Asia/Yekaterinburg")
+    local_now = datetime.combine(
+        target_date,
+        time(12, 0),
+        tzinfo=school_timezone,
+    )
+
+    inserted = scheduler.persist_today_python_forecasts(
+        session=db_session,
+        now_utc=local_now.astimezone(timezone.utc),
+    )
+
+    forecast = db_session.query(AIDailyForecast).filter_by(
+        class_id=data["class"].id,
+        date=target_date,
+    ).one()
+
+    assert inserted == 0
+    assert forecast.level == 3
+    assert forecast.source == "ai"
+
+
+def test_persist_today_python_forecast_is_idempotent(
+    db_session,
+):
+    data = _create_class_job(db_session)
+
+    target_date = data["scheduled_date"]
+    data["schedule"].date = target_date
+
+    school_timezone = ZoneInfo("Asia/Yekaterinburg")
+    local_now = datetime.combine(
+        target_date,
+        time(12, 0),
+        tzinfo=school_timezone,
+    )
+    now_utc = local_now.astimezone(timezone.utc)
+
+    first_inserted = scheduler.persist_today_python_forecasts(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    second_inserted = scheduler.persist_today_python_forecasts(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    assert first_inserted == 1
+    assert second_inserted == 0
+
+    forecasts = db_session.query(AIDailyForecast).filter_by(
+        class_id=data["class"].id,
+        date=target_date,
+    ).all()
+
+    assert len(forecasts) == 1
+    assert forecasts[0].source == "python"
+
+
+def test_persist_today_python_forecast_requires_timezone_aware_datetime(
+    db_session,
+):
+    with pytest.raises(ValueError):
+        scheduler.persist_today_python_forecasts(
+            session=db_session,
+            now_utc=datetime(2026, 11, 7, 12, 0),
+        )
+
+
+def test_collect_class_contexts_collects_base_context_only_once(
+    db_session,
+    monkeypatch,
+):
+    """Базовый контекст класса собирается один раз для нескольких дат."""
+
+    data = _create_class_job(db_session)
+
+    school_today = datetime.now(
+        ZoneInfo(data["school"].timezone)
+    ).date()
+
+    first_date = school_today + timedelta(days=3)
+    second_date = school_today + timedelta(days=4)
+
+    # Первый урок уже создан функцией _create_class_job().
+    data["schedule"].date = first_date
+
+    # Добавляем второй урок на следующую дату.
+    db_session.add(
+        Schedule(
+            assignment_id=data["assignment"].id,
+            date=second_date,
+            lesson_number=2,
+            room="102",
+            lesson_type="Обычный урок",
+        )
+    )
+
+    data["job"].period_start = first_date
+    data["job"].period_end = second_date
+
+    db_session.flush()
+
+    job = {
+        "school_id": data["school"].id,
+        "academic_year_id": data["academic_year"].id,
+        "period_start": first_date,
+        "period_end": second_date,
+    }
+
+    original_collect = ai_worker.collect_ai_analysis_input
+    collect_calls = []
+
+    def counted_collect(*args, **kwargs):
+        collect_calls.append(kwargs["target_date"])
+        return original_collect(*args, **kwargs)
+
+    monkeypatch.setattr(
+        ai_worker,
+        "collect_ai_analysis_input",
+        counted_collect,
+    )
+
+    scheduled_dates, contexts = ai_worker._collect_class_contexts(
+        db_session,
+        job,
+        data["class"].id,
+        school_today,
+    )
+
+    assert scheduled_dates == [first_date, second_date]
+    assert len(contexts) == 2
+
+    # Базовый контекст должен загружаться только один раз,
+    # даже если анализируются две даты.
+    assert collect_calls == [second_date]

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from sqlalchemy import text
 from datetime import datetime, time as datetime_time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -10,8 +11,11 @@ from database import SessionLocal
 from max_sender import create_max_bot, send_notification
 from ai_queue import enqueue_ai_job
 from ai_config import get_ai_config_if_configured
+from workload import get_load_level
 from models import (
     AcademicYear,
+    AIDailyForecast,
+    Schedule,
     School,
     Class,
     Student,
@@ -19,6 +23,7 @@ from models import (
     SurveyNotification,
     SurveyInstanceQuestion,
     SurveyResponse,
+    TeachingAssignment,
     User,
 )
 from survey_instance_service import (
@@ -125,13 +130,127 @@ def get_school_local_dates(session, now_utc: datetime) -> set:
     return local_dates
 
 
+def persist_today_python_forecasts(
+    session,
+    now_utc: datetime,
+) -> int:
+    """
+    Сохраняет Python-прогнозы на текущую местную дату каждой школы.
+
+    Существующие прогнозы не перезаписываются.
+    Дни без уроков не создают записи.
+    """
+    if now_utc.tzinfo is None or now_utc.utcoffset() is None:
+        raise ValueError("now_utc должен содержать часовой пояс.")
+
+    schools = session.scalars(
+        select(School).order_by(School.id)
+    ).all()
+
+    inserted_count = 0
+
+    for school in schools:
+        if not school.timezone:
+            logger.error(
+                "У школы %s не задан часовой пояс. "
+                "Python-прогноз пропущен.",
+                school.id,
+            )
+            continue
+
+        try:
+            school_timezone = ZoneInfo(school.timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.error(
+                "Некорректный часовой пояс школы %s: %s.",
+                school.id,
+                school.timezone,
+            )
+            continue
+
+        local_date = now_utc.astimezone(school_timezone).date()
+
+        lesson_rows = session.execute(
+            select(
+                Class.id,
+                func.count(func.distinct(Schedule.lesson_number)),
+            )
+            .join(
+                AcademicYear,
+                AcademicYear.id == Class.academic_year_id,
+            )
+            .join(
+                TeachingAssignment,
+                TeachingAssignment.class_id == Class.id,
+            )
+            .join(
+                Schedule,
+                Schedule.assignment_id == TeachingAssignment.id,
+            )
+            .where(
+                Class.school_id == school.id,
+                AcademicYear.is_active.is_(True),
+                Schedule.date == local_date,
+            )
+            .group_by(Class.id)
+        ).all()
+
+        for class_id, lesson_count in lesson_rows:
+            level = get_load_level(lesson_count)
+
+            if level is None:
+                continue
+
+            result = session.execute(
+                text(
+                    """
+                    INSERT INTO ai_daily_forecasts (
+                        class_id,
+                        date,
+                        level,
+                        source
+                    )
+                    VALUES (
+                        :class_id,
+                        :forecast_date,
+                        :level,
+                        'python'
+                    )
+                    ON CONFLICT (class_id, date)
+                    DO NOTHING
+                    """
+                ),
+                {
+                    "class_id": class_id,
+                    "forecast_date": local_date,
+                    "level": level,
+                },
+            )
+
+            inserted_count += result.rowcount or 0
+
+    if inserted_count:
+        session.commit()
+
+        logger.info(
+            "Сохранено Python-прогнозов на текущую дату: %s.",
+            inserted_count,
+        )
+
+    return inserted_count
+
+
 def enqueue_daily_ai_jobs(
     session,
     now_utc: datetime,
 ) -> int:
     """
-    Ставит ежедневные AI-задачи для школ, у которых
-    наступило 22:00 по локальному времени.
+    Ставит ежедневные AI-задачи для школ с учётом
+    локального времени каждой школы.
+
+    После 22:00 анализирует текущую локальную дату.
+    До 22:00 восстанавливает задачу за предыдущую дату,
+    если она ещё не была поставлена.
 
     Одна задача на школу и локальную дату.
     Повторные вызовы защищены dedupe_key.
@@ -175,13 +294,13 @@ def enqueue_daily_ai_jobs(
 
         local_now = now_utc.astimezone(school_timezone)
 
-        # Планировщик вызывается каждую минуту.
-        # Окно в одну минуту обеспечивает однократную постановку
-        # при штатном цикле, а dedupe_key защищает от дублей.
-        if local_now.hour != 22 or local_now.minute != 0:
-            continue
-
-        analysis_date = local_now.date()
+        # До 22:00 восстанавливаем пропущенный запуск за предыдущую локальную дату.
+        # После 22:00 запускаем анализ за текущую дату.
+        # Повторные вызовы безопасны благодаря dedupe_key.
+        if local_now.hour >= 22:
+            analysis_date = local_now.date()
+        else:
+            analysis_date = local_now.date() - timedelta(days=1)
 
         academic_year = session.scalar(
             select(AcademicYear).where(
@@ -269,10 +388,34 @@ def run_scheduler_once() -> None:
     session = SessionLocal()
 
     try:
-        enqueue_daily_ai_jobs(
-            session=session,
-            now_utc=now_utc,
-        )
+        try:
+            persist_today_python_forecasts(
+                session=session,
+                now_utc=now_utc,
+            )
+
+        except Exception:
+            session.rollback()
+
+            logger.exception(
+                "Ошибка сохранения Python-прогнозов. "
+                "Остальные задачи планировщика продолжаются."
+            )
+
+        try:
+            enqueue_daily_ai_jobs(
+                session=session,
+                now_utc=now_utc,
+            )
+
+        except Exception:
+            session.rollback()
+
+            logger.exception(
+                "Ошибка постановки AI-задач. "
+                "Остальные задачи планировщика продолжаются."
+            )
+
         # Закрываем просроченные опросы независимо от настроек школ.
         closed_count = close_expired_survey_instances(
             session=session,

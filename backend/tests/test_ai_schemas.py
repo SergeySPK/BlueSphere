@@ -101,6 +101,8 @@ def make_output(
     target_date=date(2026, 11, 3),
     survey_dates=None,
     recommendations=None,
+    reduce_load=None,
+    suitable_for_moving=None,
 ):
     return AIAnalysisOutput(
         daily_loads=[
@@ -108,6 +110,8 @@ def make_output(
                 "date": target_date,
                 "level": 2,
                 "survey_dates_used": survey_dates or [],
+                "reduce_load": reduce_load,
+                "suitable_for_moving": suitable_for_moving,
             }
         ],
         recommendations=recommendations or [],
@@ -325,3 +329,20 @@ def test_unknown_fields_are_rejected():
             recommendations=[],
             arbitrary_database_command="DROP TABLE schedule",
         )
+
+
+def test_ai_daily_load_flags_are_optional():
+    output = make_output()
+
+    assert output.daily_loads[0].reduce_load is None
+    assert output.daily_loads[0].suitable_for_moving is None
+
+
+def test_ai_daily_load_accepts_recommendation_flags():
+    output = make_output(
+        reduce_load=True,
+        suitable_for_moving=False,
+    )
+
+    assert output.daily_loads[0].reduce_load is True
+    assert output.daily_loads[0].suitable_for_moving is False
