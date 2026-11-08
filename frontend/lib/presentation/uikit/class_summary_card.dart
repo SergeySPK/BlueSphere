@@ -1,16 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
+import '../../domain/survey.dart';
 import 'colors.dart';
 
-// Кастомный виджет карточки с общей сводкой состояния класса
+// Карточка с общей сводкой состояния класса
 class ClassSummaryCard extends StatelessWidget {
-  final String date; // Дата опроса
-  final int percentage; // Процент учеников с самым частым ответом
-  final String statusText; // Текст статуса
-  final String hardestSubject; // Самый тревожный предмет
-  final String easiestSubject; // Самый легкий предмет
+  final String date;
+  final int percentage;
+  final String statusText;
+  final List<SurveyQuestionSummary> questionSummaries;
 
-  const ClassSummaryCard({super.key, required this.date, required this.percentage, required this.statusText, required this.hardestSubject, required this.easiestSubject});
+  const ClassSummaryCard({
+    super.key,
+    required this.date,
+    required this.percentage,
+    required this.statusText,
+    required this.questionSummaries,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -71,47 +77,34 @@ class ClassSummaryCard extends StatelessWidget {
           ),
           SizedBox(height: 12.fh),
           Column(
-            children: [
-              Container(
-                padding: ps(h: 8.fw, v: 8.fh),
-                decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(8.r)),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Самый тревожный урок\nна сегодня:',
-                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, color: grey, fontWeight: .w500),
+            children: questionSummaries.map((summary) {
+              return Padding(
+                padding: po(b: 8.fh),
+                child: Container(
+                  padding: ps(h: 8.fw, v: 8.fh),
+                  decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(8.r)),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          summary.title,
+                          style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, color: grey, fontWeight: .w500),
+                        ),
                       ),
-                    ),
-                    Text(
-                      hardestSubject,
-                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 18.fh, fontWeight: .w600, color: loadMax),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(height: 8.fh),
-              Container(
-                padding: ps(h: 8.fw, v: 8.fh),
-                decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(8.r)),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Самый легкий урок\nна сегодня:',
-                        style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, color: grey, fontWeight: .w500),
+                      SizedBox(width: 8.fw),
+                      Flexible(
+                        child: Text(
+                          summary.topAnswer,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(fontFamily: 'SF Pro', fontSize: 15.fh, fontWeight: .w600, color: loadMax),
+                        ),
                       ),
-                    ),
-                    Text(
-                      easiestSubject,
-                      style: TextStyle(fontFamily: 'SF Pro', fontSize: 18.fh, fontWeight: .w600, color: loadMax),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              );
+            }).toList(),
           ),
         ],
       ),

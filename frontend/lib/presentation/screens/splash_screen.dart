@@ -94,7 +94,7 @@ class _SplashScreenState extends State<SplashScreen> {
               left: 0,
               right: 0,
               child: Text(
-                'v.0.0.1',
+                'v.0.3.5',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontFamily: 'SF Pro', fontSize: 10.fh, color: text, fontWeight: .w600),
               ),

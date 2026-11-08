@@ -5,10 +5,11 @@ import 'package:blue_sphere/presentation/screens/surveys_screen.dart';
 import 'package:blue_sphere/presentation/screens/splash_screen.dart';
 import 'package:blue_sphere/presentation/uikit/bottom_nav_bar.dart';
 import 'package:blue_sphere/presentation/uikit/colors.dart';
-import 'package:blue_sphere/core/logger.dart';
-import 'package:blue_sphere/data/api_service.dart';
-import 'package:flutter_max_miniapp/flutter_max_miniapp.dart';
+import 'package:blue_sphere/presentation/uikit/error_screen.dart';
 import 'package:vize/vize.dart';
+import 'package:blue_sphere/data/api_service.dart';
+import 'package:blue_sphere/core/logger.dart';
+import 'package:flutter_max_miniapp/flutter_max_miniapp.dart';
 
 // Точка входа в приложение
 void main() async {
@@ -16,7 +17,7 @@ void main() async {
   runApp(const MyApp());
 }
 
-// Перевод технического ID класса
+// Перевода технического ID класса
 String getRussianClassName(String classId) {
   if (classId.isEmpty) return 'Мой класс';
   final match = RegExp(r'^(\d+)([a-zA-Z]+)$').firstMatch(classId);
@@ -58,7 +59,6 @@ String getRussianClassName(String classId) {
   return classId;
 }
 
-// Корневой виджет приложения
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -69,7 +69,6 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(scaffoldBackgroundColor: background),
       builder: (context, child) {
-        // Инициализация библиотеки Vize для адаптивной верстки
         Vize.init(context, figmaWidth: 375, figmaHeight: 812);
         return child!;
       },
@@ -78,7 +77,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Обертка для авторизации через MAX и загрузки начальных данных
+// Обертка для авторизации и загрузки данных
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
 
@@ -90,6 +89,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   bool _isLoading = true;
   List<String> _roles = [];
   List<String> _classIds = [];
+  int? _authErrorCode;
 
   @override
   void initState() {
@@ -97,7 +97,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
     _initializeApp();
   }
 
-  // Инициализация MAX MiniApp и получение данных пользователя с бэкенда
+  // Инициализация MAX MiniApp и авторизация на бэкенде
   Future<void> _initializeApp() async {
     try {
       final webApp = MaxWebApp();
@@ -106,16 +106,28 @@ class _AuthWrapperState extends State<AuthWrapper> {
       final initData = webApp.initData;
       if (initData != null && initData.isNotEmpty) {
         final authData = await ApiService.auth(initData);
+
         if (authData != null) {
           _roles = List<String>.from(authData['roles'] ?? []);
           _classIds = List<String>.from(authData['class_ids'] ?? []);
           AppLogger.info('Успешная авторизация. Роли: $_roles', tag: '[AUTH]');
+        } else {
+          _authErrorCode = 401;
         }
       } else {
         AppLogger.error('initData пуст. Приложение запущено вне MAX', tag: '[AUTH]');
+        _authErrorCode = 401;
       }
     } catch (e, stack) {
       AppLogger.error('Ошибка авторизации', error: e, stackTrace: stack, tag: '[AUTH]');
+
+      // Извлекаем код ошибки из исключения
+      int code = 500;
+      final errorString = e.toString();
+      if (errorString.contains('Exception: ')) {
+        code = int.tryParse(errorString.split('Exception: ')[1]) ?? 500;
+      }
+      _authErrorCode = code;
     }
 
     if (mounted) {
@@ -130,11 +142,19 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (_isLoading) {
       return const SplashScreen();
     }
+
+    if (_authErrorCode != null) {
+      return Scaffold(
+        backgroundColor: background,
+        body: ErrorScreen(code: _authErrorCode!),
+      );
+    }
+
     return MainScreen(roles: _roles, classIds: _classIds);
   }
 }
 
-// Главный экран с нижней навигацией и переключением вкладок
+// Главный экран
 class MainScreen extends StatefulWidget {
   final List<String> roles;
   final List<String> classIds;
@@ -149,8 +169,6 @@ class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
   String _selectedClassId = 'Выберите класс';
   String _selectedClassName = 'Выберите класс';
-
-  // Ключ для управления навигацией внутри вкладки "Нагрузка"
   final GlobalKey<NavigatorState> _loadNavigatorKey = GlobalKey<NavigatorState>();
 
   bool get isTeacher => widget.roles.contains('teacher') || widget.roles.contains('admin');
@@ -158,7 +176,6 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    // Если ученик, автоматически выбираем его класс
     if (!isTeacher && widget.classIds.isNotEmpty) {
       _selectedClassId = widget.classIds.first;
       _selectedClassName = getRussianClassName(widget.classIds.first);
@@ -167,9 +184,31 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (isTeacher && widget.classIds.isEmpty) {
+      return Scaffold(
+        backgroundColor: background,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Нет доступных классов',
+                style: TextStyle(fontFamily: 'Inter', fontSize: 18.fh, fontWeight: .w600, color: black),
+              ),
+              SizedBox(height: 8.fh),
+              Text(
+                'Обратитесь к администратору\nдля получения доступа',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontFamily: 'SF Pro', fontSize: 14.fh, fontWeight: .w400, color: text),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final List<Widget> screens = [];
 
-    // Вкладка "Классы"
     if (isTeacher) {
       screens.add(
         ClassesScreen(
@@ -184,7 +223,6 @@ class _MainScreenState extends State<MainScreen> {
       );
     }
 
-    // Вкладка "Нагрузка"
     screens.add(
       Navigator(
         key: _loadNavigatorKey,
@@ -195,7 +233,6 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
 
-    // Вкладка "Опросы"
     screens.add(SurveysScreen(classId: _selectedClassId, className: _selectedClassName, onGoToClasses: () => setState(() => _currentIndex = 0)));
 
     return Scaffold(

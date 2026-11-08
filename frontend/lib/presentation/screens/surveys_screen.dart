@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:vize/vize.dart';
 import '../../data/api_service.dart';
+import '../../domain/survey.dart';
 import '../../core/logger.dart';
 import '../uikit/colors.dart';
 import '../uikit/custom_header.dart';
@@ -25,9 +26,7 @@ class _SurveysScreenState extends State<SurveysScreen> {
   bool _isLoading = true;
   int? _errorCode;
   String _surveyDate = '';
-  List<SurveyResultItem> _generalResults = [];
-  List<SurveyResultItem> _stressSubjects = [];
-  List<SurveyResultItem> _easySubjects = [];
+  List<SurveyQuestionResult> _surveyQuestions = [];
   int? _bannerLevel;
   String? _bannerDate;
 
@@ -56,7 +55,7 @@ class _SurveysScreenState extends State<SurveysScreen> {
     }
   }
 
-  // Загрузка списка опросов и статистики по последнему из них
+  // Загрузка списка опросов и статистики
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -73,8 +72,7 @@ class _SurveysScreenState extends State<SurveysScreen> {
         return;
       }
 
-      final latestSurvey = surveys[0];
-      final date = latestSurvey['survey_date'];
+      final date = surveys[0]['survey_date'];
       _surveyDate = date;
       AppLogger.info('Выбран последний опрос на дату: $date', tag: '[UI] Surveys');
 
@@ -82,27 +80,24 @@ class _SurveysScreenState extends State<SurveysScreen> {
         final summary = await ApiService.getSummary(widget.classId, date);
         _bannerLevel = summary.hasData ? summary.level : 4;
         _bannerDate = summary.date;
-        AppLogger.info('Баннер для опроса: level=$_bannerLevel, hasData=${summary.hasData}', tag: '[UI] Surveys');
+        AppLogger.info('Баннер загружен: level=$_bannerLevel', tag: '[UI] Surveys');
       } catch (e) {
         _bannerLevel = 4;
         _bannerDate = date;
-        AppLogger.error('Не удалось загрузить баннер для опроса', error: e, tag: '[UI] Surveys');
+        AppLogger.error('Не удалось загрузить баннер', error: e, tag: '[UI] Surveys');
       }
 
       final stats = await ApiService.getSurveyStatistics(widget.classId, date);
       _parseStatistics(stats);
 
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     } catch (e) {
       int code = 500;
       final errorString = e.toString();
       if (errorString.contains('Exception: ')) {
         code = int.tryParse(errorString.split('Exception: ')[1]) ?? 500;
       }
+
       AppLogger.error('Ошибка загрузки данных опросов', error: e, tag: '[UI] Surveys');
 
       if (mounted) {
@@ -114,48 +109,45 @@ class _SurveysScreenState extends State<SurveysScreen> {
     }
   }
 
-  // Парсинг статистики из JSON в списки для UI
+  // Парсинг статистики в новую динамическую модель
   void _parseStatistics(Map<String, dynamic> stats) {
-    final questions = stats['questions'] as List? ?? [];
+    final rawQuestions = stats['questions'] as List? ?? [];
 
-    _generalResults.clear();
-    _stressSubjects.clear();
-    _easySubjects.clear();
+    _surveyQuestions = rawQuestions.map((rawQuestion) {
+      final question = Map<String, dynamic>.from(rawQuestion as Map);
+      final rawOptions = question['options'] as List? ?? [];
 
-    for (var q in questions) {
-      final title = (q['title'] ?? '').toString().toLowerCase();
-      final options = q['options'] as List? ?? [];
+      final options = rawOptions.map((rawOption) {
+        final option = Map<String, dynamic>.from(rawOption as Map);
+        final percentageValue = option['percentage'];
+        final percentage = percentageValue is num ? percentageValue.round() : 0;
 
-      final parsedOptions = options.map((opt) {
-        final optTitle = opt['title'] ?? 'Без названия';
-        final percent = (opt['percentage'] ?? 0).toInt();
-
-        return SurveyResultItem(label: optTitle, percentage: percent, isHighlighted: percent > 50);
+        return SurveyResultItem(label: (option['title'] ?? 'Без названия').toString(), percentage: percentage, isHighlighted: percentage > 50);
       }).toList();
 
-      // Распределяем вопросы по категориям
-      if (title.contains('общая оценка') || title.contains('состояние')) {
-        _generalResults = parsedOptions;
-      } else if (title.contains('тревожно') || title.contains('стресс') || title.contains('сложн')) {
-        _stressSubjects = parsedOptions;
-      } else if (title.contains('легко') || title.contains('просто')) {
-        _easySubjects = parsedOptions;
+      return SurveyQuestionResult(title: (question['title'] ?? 'Без названия').toString(), options: options);
+    }).toList();
+  }
+
+  // Строим сводку для всех вопросов, кроме первого
+  List<SurveyQuestionSummary> _buildQuestionSummaries() {
+    if (_surveyQuestions.length <= 1) return [];
+
+    return _surveyQuestions.skip(1).map((question) {
+      if (question.options.isEmpty) {
+        return SurveyQuestionSummary(title: question.title, topAnswer: 'Нет ответов');
       }
-    }
+      final top = question.options.reduce((a, b) => a.percentage > b.percentage ? a : b);
+      return SurveyQuestionSummary(title: question.title, topAnswer: top.percentage > 0 ? top.label : 'Нет ответов');
+    }).toList();
   }
 
-  // Получение самого частого ответа
-  String _getTopSubject(List<SurveyResultItem> items) {
-    if (items.isEmpty) return 'Нет данных';
-    final top = items.reduce((a, b) => a.percentage > b.percentage ? a : b);
-    return top.percentage > 0 ? top.label : 'Нет ответов';
-  }
-
-  // Получение текстового статуса
+  // Получение текстового статуса для главного круга
   String _getGeneralStatus() {
-    if (_generalResults.isEmpty) return 'НЕТ ДАННЫХ';
-    final top = _generalResults.reduce((a, b) => a.percentage > b.percentage ? a : b);
-    if (top.percentage == 0) return 'НЕТ ДАННЫХ';
+    if (_surveyQuestions.isEmpty || _surveyQuestions.first.options.isEmpty) return 'Нет результатов';
+
+    final top = _surveyQuestions.first.options.reduce((a, b) => a.percentage > b.percentage ? a : b);
+    if (top.percentage == 0) return 'Нет результатов';
 
     final label = top.label.toLowerCase();
     if (label.contains('отлично')) return 'ОТЛИЧНОЕ СОСТОЯНИЕ';
@@ -167,16 +159,16 @@ class _SurveysScreenState extends State<SurveysScreen> {
     return '${top.label.toUpperCase()} СОСТОЯНИЕ';
   }
 
-  int _getTopPercentage(List<SurveyResultItem> items) {
-    if (items.isEmpty) return 0;
-    return items.reduce((a, b) => a.percentage > b.percentage ? a : b).percentage;
+  // Получение процента для главного круга
+  int _getTopPercentage() {
+    if (_surveyQuestions.isEmpty || _surveyQuestions.first.options.isEmpty) return 0;
+    return _surveyQuestions.first.options.reduce((a, b) => a.percentage > b.percentage ? a : b).percentage;
   }
 
   // Форматирование даты
   String _formatDate(String isoDate) {
     if (isoDate.isEmpty) return '';
     if (isoDate.contains('.')) return isoDate;
-
     try {
       final parts = isoDate.split('-');
       if (parts.length == 3) {
@@ -205,7 +197,7 @@ class _SurveysScreenState extends State<SurveysScreen> {
                 ? _buildNoClassSelected()
                 : _isLoading
                 ? Center(child: CircularProgressIndicator(color: loadMax))
-                : _generalResults.isEmpty && _stressSubjects.isEmpty && _easySubjects.isEmpty
+                : _surveyQuestions.isEmpty
                 ? Center(
                     child: Text(
                       'Нет данных об опросах',
@@ -217,15 +209,9 @@ class _SurveysScreenState extends State<SurveysScreen> {
                     child: Column(
                       children: [
                         if (_bannerLevel != null) ...[StatusBanner(level: _bannerLevel!, date: _formatDate(_bannerDate ?? _surveyDate), showButton: false), SizedBox(height: 11.fh)],
-                        ClassSummaryCard(
-                          date: _formatDate(_surveyDate),
-                          percentage: _getTopPercentage(_generalResults),
-                          statusText: _getGeneralStatus(),
-                          hardestSubject: _getTopSubject(_stressSubjects),
-                          easiestSubject: _getTopSubject(_easySubjects),
-                        ),
+                        ClassSummaryCard(date: _formatDate(_surveyDate), percentage: _getTopPercentage(), statusText: _getGeneralStatus(), questionSummaries: _buildQuestionSummaries()),
                         SizedBox(height: 11.fh),
-                        SurveyResultsCard(date: _formatDate(_surveyDate), generalResults: _generalResults, stressSubjects: _stressSubjects, easySubjects: _easySubjects),
+                        SurveyResultsCard(date: _formatDate(_surveyDate), questions: _surveyQuestions),
                       ],
                     ),
                   ),
