@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import date, datetime, timezone
 
 from sqlalchemy import func, or_, select
@@ -30,6 +31,7 @@ def collect_ai_analysis_input(
     period_end: date,
     target_date: date,
     now: datetime | None = None,
+    progress_callback: Callable[[], None] | None = None,
 ) -> AIAnalysisInput:
     """
     Формирует контекст AI-анализа на основе данных класса.
@@ -212,7 +214,7 @@ def collect_ai_analysis_input(
     if not any(lesson["date"] == target_date for lesson in lessons):
         raise ValueError(
             f"На {target_date} нет уроков. "
-            "Нагрузку пустого дня должен выставить Python (level=4)."
+            "AI-контекст для дня без уроков не формируется."
         )
 
     # -----------------------------------------------------
@@ -229,142 +231,274 @@ def collect_ai_analysis_input(
         .order_by(SurveyInstance.survey_date)
     ).all()
 
-    surveys = []
+    # Определяем закрытые опросы.
+    # Периодический callback не позволяет lease истечь,
+    # если в истории класса накопилось много опросов.
+    closed_instances = []
 
-    for instance in survey_instances:
+    for index, instance in enumerate(survey_instances, start=1):
+        if (
+            progress_callback is not None
+            and index % 25 == 0
+        ):
+            progress_callback()
+
         effective_status = get_effective_survey_status(
             instance,
             school.timezone,
             now=now,
         )
 
-        # Не передаём открытые и отменённые опросы.
-        if effective_status != "closed":
-            continue
+        if effective_status == "closed":
+            closed_instances.append(instance)
 
-        questions = db.scalars(
+    surveys = []
+
+    if closed_instances:
+        closed_instance_ids = [
+            instance.id
+            for instance in closed_instances
+        ]
+
+        # Все вопросы всех закрытых опросов одним запросом.
+        question_rows = db.scalars(
             select(SurveyInstanceQuestion)
             .where(
-                SurveyInstanceQuestion.instance_id == instance.id,
+                SurveyInstanceQuestion.instance_id.in_(
+                    closed_instance_ids
+                )
             )
-            .order_by(SurveyInstanceQuestion.sort_order)
+            .order_by(
+                SurveyInstanceQuestion.instance_id,
+                SurveyInstanceQuestion.sort_order,
+            )
         ).all()
 
-        question_aggregates = []
+        question_ids = [
+            question.id
+            for question in question_rows
+        ]
 
-        for question in questions:
-            # Зачисление должно действовать именно на дату опроса.
-            eligible_enrollment = (
-                (StudentEnrollment.start_date <= instance.survey_date)
-                & (
-                    or_(
-                        StudentEnrollment.end_date.is_(None),
-                        StudentEnrollment.end_date >= instance.survey_date,
-                    )
-                )
-            )
+        # Все варианты ответов одним запросом.
+        option_rows = []
 
-            # Количество учеников с отправленным ответом.
-            # DISTINCT защищает подсчёт от размножения строк
-            # при соединении с историей зачислений.
-            respondents_count = (
-                db.scalar(
-                    select(
-                        func.count(
-                            func.distinct(SurveyResponse.student_id)
-                        )
-                    )
-                    .select_from(SurveyResponse)
-                    .join(
-                        StudentEnrollment,
-                        StudentEnrollment.student_id
-                        == SurveyResponse.student_id,
-                    )
-                    .where(
-                        SurveyResponse.instance_question_id == question.id,
-                        SurveyResponse.status == "submitted",
-                        StudentEnrollment.class_id == class_id,
-                        eligible_enrollment,
-                    )
-                )
-                or 0
-            )
-
-            options = db.scalars(
+        if question_ids:
+            option_rows = db.scalars(
                 select(SurveyInstanceOption)
                 .where(
-                    SurveyInstanceOption.instance_question_id
-                    == question.id,
+                    SurveyInstanceOption.instance_question_id.in_(
+                        question_ids
+                    )
                 )
-                .order_by(SurveyInstanceOption.sort_order)
+                .order_by(
+                    SurveyInstanceOption.instance_question_id,
+                    SurveyInstanceOption.sort_order,
+                )
             ).all()
 
-            option_aggregates = []
+        # Группируем вопросы по опросам.
+        questions_by_instance = {}
 
-            for option in options:
-                responses_count = (
-                    db.scalar(
-                        select(
-                            func.count(
-                                func.distinct(SurveyResponseOption.response_id)
-                            )
+        for question in question_rows:
+            questions_by_instance.setdefault(
+                question.instance_id,
+                [],
+            ).append(question)
+
+        # Группируем варианты ответов по вопросам.
+        options_by_question = {}
+
+        for option in option_rows:
+            options_by_question.setdefault(
+                option.instance_question_id,
+                [],
+            ).append(option)
+
+        # -------------------------------------------------
+        # Количество респондентов по каждому вопросу.
+        # Учитываются только отправленные ответы учеников,
+        # зачисление которых действовало на дату опроса.
+        # DISTINCT защищает от дублирования при наличии
+        # нескольких подходящих записей зачисления.
+        # -------------------------------------------------
+
+        respondents_by_question = {}
+
+        if question_ids:
+            respondent_rows = db.execute(
+                select(
+                    SurveyResponse.instance_question_id,
+                    func.count(
+                        func.distinct(SurveyResponse.student_id)
+                    ),
+                )
+                .select_from(SurveyResponse)
+                .join(
+                    SurveyInstanceQuestion,
+                    SurveyInstanceQuestion.id
+                    == SurveyResponse.instance_question_id,
+                )
+                .join(
+                    SurveyInstance,
+                    SurveyInstance.id
+                    == SurveyInstanceQuestion.instance_id,
+                )
+                .join(
+                    StudentEnrollment,
+                    StudentEnrollment.student_id
+                    == SurveyResponse.student_id,
+                )
+                .where(
+                    SurveyInstanceQuestion.id.in_(question_ids),
+                    SurveyResponse.status == "submitted",
+                    StudentEnrollment.class_id == class_id,
+                    StudentEnrollment.start_date
+                    <= SurveyInstance.survey_date,
+                    or_(
+                        StudentEnrollment.end_date.is_(None),
+                        StudentEnrollment.end_date
+                        >= SurveyInstance.survey_date,
+                    ),
+                )
+                .group_by(
+                    SurveyResponse.instance_question_id
+                )
+            ).all()
+
+            respondents_by_question = {
+                question_id: count
+                for question_id, count in respondent_rows
+            }
+
+        # -------------------------------------------------
+        # Количество ответов по каждой паре:
+        # question_id + option_id.
+        # Вместо отдельного COUNT для каждого варианта
+        # выполняется одна групповая агрегация.
+        # -------------------------------------------------
+
+        responses_by_question_option = {}
+
+        if question_ids:
+            option_response_rows = db.execute(
+                select(
+                    SurveyResponseOption.instance_question_id,
+                    SurveyResponseOption.option_id,
+                    func.count(
+                        func.distinct(
+                            SurveyResponseOption.response_id
                         )
-                        .select_from(SurveyResponseOption)
-                        .join(
-                            SurveyResponse,
-                            SurveyResponse.id
-                            == SurveyResponseOption.response_id,
-                        )
-                        .join(
-                            StudentEnrollment,
-                            StudentEnrollment.student_id
-                            == SurveyResponse.student_id,
-                        )
-                        .where(
-                            SurveyResponseOption.option_id == option.id,
-                            SurveyResponseOption.instance_question_id
-                            == question.id,
-                            SurveyResponse.status == "submitted",
-                            StudentEnrollment.class_id == class_id,
-                            eligible_enrollment,
-                        )
-                    )
-                    or 0
+                    ),
+                )
+                .select_from(SurveyResponseOption)
+                .join(
+                    SurveyResponse,
+                    SurveyResponse.id
+                    == SurveyResponseOption.response_id,
+                )
+                .join(
+                    SurveyInstanceQuestion,
+                    SurveyInstanceQuestion.id
+                    == SurveyResponseOption.instance_question_id,
+                )
+                .join(
+                    SurveyInstance,
+                    SurveyInstance.id
+                    == SurveyInstanceQuestion.instance_id,
+                )
+                .join(
+                    StudentEnrollment,
+                    StudentEnrollment.student_id
+                    == SurveyResponse.student_id,
+                )
+                .where(
+                    SurveyInstanceQuestion.id.in_(question_ids),
+                    SurveyResponse.status == "submitted",
+                    StudentEnrollment.class_id == class_id,
+                    StudentEnrollment.start_date
+                    <= SurveyInstance.survey_date,
+                    or_(
+                        StudentEnrollment.end_date.is_(None),
+                        StudentEnrollment.end_date
+                        >= SurveyInstance.survey_date,
+                    ),
+                )
+                .group_by(
+                    SurveyResponseOption.instance_question_id,
+                    SurveyResponseOption.option_id,
+                )
+            ).all()
+
+            responses_by_question_option = {
+                (question_id, option_id): count
+                for question_id, option_id, count
+                in option_response_rows
+            }
+
+        # -------------------------------------------------
+        # Собираем готовую структуру контекста в Python.
+        # SQL-запросы больше не выполняются внутри циклов
+        # вопросов и вариантов ответов.
+        # -------------------------------------------------
+
+        for instance in closed_instances:
+            question_aggregates = []
+
+            for question in questions_by_instance.get(
+                instance.id,
+                [],
+            ):
+                respondents_count = (
+                    respondents_by_question.get(question.id, 0)
                 )
 
-                percentage = (
-                    round(
-                        responses_count / respondents_count * 100,
-                        1,
-                    )
-                    if respondents_count > 0
-                    else 0.0
-                )
+                option_aggregates = []
 
-                option_aggregates.append(
+                for option in options_by_question.get(
+                    question.id,
+                    [],
+                ):
+                    responses_count = (
+                        responses_by_question_option.get(
+                            (question.id, option.id),
+                            0,
+                        )
+                    )
+
+                    percentage = (
+                        round(
+                            responses_count / respondents_count * 100,
+                            1,
+                        )
+                        if respondents_count > 0
+                        else 0.0
+                    )
+
+                    option_aggregates.append(
+                        {
+                            "title": option.title,
+                            "responses_count": responses_count,
+                            "percentage": percentage,
+                        }
+                    )
+
+                question_aggregates.append(
                     {
-                        "title": option.title,
-                        "responses_count": responses_count,
-                        "percentage": percentage,
+                        "title": question.title,
+                        "answer_type": question.answer_type,
+                        "respondents_count": respondents_count,
+                        "options": option_aggregates,
                     }
                 )
 
-            question_aggregates.append(
+            surveys.append(
                 {
-                    "title": question.title,
-                    "answer_type": question.answer_type,
-                    "respondents_count": respondents_count,
-                    "options": option_aggregates,
+                    "survey_date": instance.survey_date,
+                    "status": "closed",
+                    "questions": question_aggregates,
                 }
             )
 
-        surveys.append(
-            {
-                "survey_date": instance.survey_date,
-                "status": "closed",
-                "questions": question_aggregates,
-            }
-        )
 
     # -----------------------------------------------------
     # 6. Строгая валидация готового контекста
@@ -382,5 +516,54 @@ def collect_ai_analysis_input(
             "assignments": assignments,
             "lessons": lessons,
             "surveys": surveys,
+        }
+    )
+
+
+def build_ai_analysis_input_for_date(
+    base_context: AIAnalysisInput,
+    target_date: date,
+) -> AIAnalysisInput:
+    """
+    Создаёт контекст конкретной даты из заранее собранного
+    контекста класса.
+
+    Расписание и назначения переиспользуются.
+    В историю попадают только закрытые опросы,
+    проведённые строго до целевой даты.
+    """
+
+    if not (
+        base_context.period_start
+        <= target_date
+        <= base_context.period_end
+    ):
+        raise ValueError(
+            "target_date находится вне периода анализа"
+        )
+
+    lessons_for_date = [
+        lesson
+        for lesson in base_context.lessons
+        if lesson.date == target_date
+    ]
+
+    if not lessons_for_date:
+        raise ValueError(
+            f"На {target_date} нет уроков. "
+            "Контекст AI для пустого дня не создаётся."
+        )
+
+    surveys_before_target = [
+        survey
+        for survey in base_context.surveys
+        if survey.survey_date < target_date
+    ]
+
+    return AIAnalysisInput.model_validate(
+        {
+            **base_context.model_dump(),
+            "target_date": target_date,
+            "surveys": surveys_before_target,
         }
     )

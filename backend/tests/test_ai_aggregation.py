@@ -13,6 +13,8 @@ def make_result(
     target_date: date,
     level: int,
     recommendations: list | None = None,
+    reduce_load: bool | None = None,
+    suitable_for_moving: bool | None = None,
 ) -> AIAnalysisOutput:
     return AIAnalysisOutput(
         daily_loads=[
@@ -20,6 +22,8 @@ def make_result(
                 "date": target_date,
                 "level": level,
                 "survey_dates_used": [],
+                "reduce_load": reduce_load,
+                "suitable_for_moving": suitable_for_moving,
             }
         ],
         recommendations=recommendations or [],
@@ -59,16 +63,45 @@ def test_aggregates_load_levels_and_date_lists():
             date(2026, 11, 7),
         ],
         day_results=[
-            make_result(date(2026, 11, 2), 0),
-            make_result(date(2026, 11, 3), 1),
-            make_result(date(2026, 11, 5), 2),
-            make_result(date(2026, 11, 6), 3),
-            make_result(date(2026, 11, 7), 4),
+            # AI-флаг имеет приоритет над уровнем:
+            # уровень 0, но AI не просит разгружать день.
+            make_result(
+                date(2026, 11, 2),
+                0,
+                reduce_load=False,
+                suitable_for_moving=False,
+            ),
+            # AI рекомендует разгрузить день.
+            make_result(
+                date(2026, 11, 3),
+                1,
+                reduce_load=True,
+                suitable_for_moving=False,
+            ),
+            # Нет AI-флагов — должны работать Python-пороги.
+            make_result(
+                date(2026, 11, 5),
+                2,
+            ),
+            # AI рекомендует перенести нагрузку на этот день.
+            make_result(
+                date(2026, 11, 6),
+                3,
+                reduce_load=False,
+                suitable_for_moving=True,
+            ),
+            # Уровень 4, но AI явно не рекомендует перенос.
+            make_result(
+                date(2026, 11, 7),
+                4,
+                reduce_load=False,
+                suitable_for_moving=False,
+            ),
         ],
     )
 
-    assert result.days_to_reduce == (2, 3)
-    assert result.days_to_move_to == (6, 7)
+    assert result.days_to_reduce == (3,)
+    assert result.days_to_move_to == (6,)
 
     assert [
         (item.date, item.level, item.source)
@@ -76,7 +109,6 @@ def test_aggregates_load_levels_and_date_lists():
     ] == [
         (date(2026, 11, 2), 0, "ai"),
         (date(2026, 11, 3), 1, "ai"),
-        (date(2026, 11, 4), 4, "python"),
         (date(2026, 11, 5), 2, "ai"),
         (date(2026, 11, 6), 3, "ai"),
         (date(2026, 11, 7), 4, "ai"),
@@ -100,11 +132,13 @@ def test_empty_days_are_not_move_targets():
     assert result.days_to_reduce == (2, 4)
     assert result.days_to_move_to == ()
 
-    empty_day = result.daily_loads[1]
-
-    assert empty_day.date == date(2026, 11, 3)
-    assert empty_day.level == 4
-    assert empty_day.source == "python"
+    # 3 ноября нет уроков — эта дата не должна создавать прогноз.
+    assert [
+        item.date for item in result.daily_loads
+    ] == [
+        date(2026, 11, 2),
+        date(2026, 11, 4),
+    ]
 
 
 def test_level_two_is_not_in_either_date_list():
@@ -253,3 +287,23 @@ def test_recommendations_from_all_days_are_combined():
         "Рекомендация первого дня",
         "Рекомендация второго дня",
     ]
+
+
+def test_python_fallback_uses_load_levels_when_ai_flags_are_missing():
+    result = aggregate_period_results(
+        period_start=date(2026, 11, 2),
+        period_end=date(2026, 11, 4),
+        scheduled_dates=[
+            date(2026, 11, 2),
+            date(2026, 11, 3),
+            date(2026, 11, 4),
+        ],
+        day_results=[
+            make_result(date(2026, 11, 2), 0),
+            make_result(date(2026, 11, 3), 2),
+            make_result(date(2026, 11, 4), 4),
+        ],
+    )
+
+    assert result.days_to_reduce == (2,)
+    assert result.days_to_move_to == (4,)

@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 
 from ai_aggregation import aggregate_period_results
 from ai_config import get_ai_config_if_configured
-from ai_context import collect_ai_analysis_input
+from ai_context import build_ai_analysis_input_for_date, collect_ai_analysis_input
 from ai_prompts import AI_PROMPT_VERSION
 from ai_provider import AINonRetryableError
 from ai_schemas import AIAnalysisOutput
@@ -165,10 +165,12 @@ def _collect_class_contexts(
     job: dict,
     class_id: int,
     school_local_today,
+    progress_callback=None,
 ):
     """
-    Собирает AI-контексты только для будущих дат,
-    на которые в расписании есть уроки.
+    Собирает базовый контекст класса один раз,
+    затем формирует контексты для каждой будущей даты
+    с уроками.
     """
 
     scheduled_dates = db.scalars(
@@ -189,23 +191,41 @@ def _collect_class_contexts(
         .order_by(Schedule.date)
     ).all()
 
-    # Сегодняшние и прошедшие даты не анализируем повторно.
     future_scheduled_dates = [
         target_date
         for target_date in scheduled_dates
         if target_date > school_local_today
     ]
 
+    if not future_scheduled_dates:
+        return [], []
+
+    # Не позволяем lease истечь во время обработки
+    # большого количества дат.
+    if progress_callback is not None:
+        progress_callback()
+
+    # Самая поздняя дата позволяет получить всю историю
+    # закрытых опросов, потенциально нужную для периода.
+    base_context = collect_ai_analysis_input(
+        db,
+        school_id=job["school_id"],
+        class_id=class_id,
+        period_start=job["period_start"],
+        period_end=job["period_end"],
+        target_date=future_scheduled_dates[-1],
+        progress_callback=progress_callback,
+    )
+
     contexts = []
 
     for target_date in future_scheduled_dates:
-        context = collect_ai_analysis_input(
-            db,
-            school_id=job["school_id"],
-            class_id=class_id,
-            period_start=job["period_start"],
-            period_end=job["period_end"],
-            target_date=target_date,
+        if progress_callback is not None:
+            progress_callback()
+
+        context = build_ai_analysis_input_for_date(
+            base_context,
+            target_date,
         )
 
         contexts.append(context)
@@ -542,6 +562,27 @@ def _persist_success(
             AIRecommendation.analysis_run_id == run_id
         ).delete(synchronize_session=False)
 
+        # Удаляем устаревшие будущие прогнозы этого запуска.
+        # Наступившие и прошедшие даты сохраняем неизменными.
+        db.execute(
+            text(
+                """
+                DELETE FROM ai_daily_forecasts
+                WHERE
+                    analysis_run_id = :run_id
+                    AND date >
+                    (
+                        clock_timestamp()
+                        AT TIME ZONE :school_timezone
+                    )::date
+                """
+            ),
+            {
+                "run_id": run_id,
+                "school_timezone": school_timezone,
+            },
+        )
+
         for class_id, result in aggregated_by_class.items():
 
             for item in result.daily_loads:
@@ -555,14 +596,44 @@ def _persist_success(
                 ):
                     continue
 
-                db.add(
-                    AIDailyLoad(
-                        analysis_run_id=run_id,
-                        class_id=class_id,
-                        date=item.date,
-                        level=item.level,
-                        source=item.source,
-                    )
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO ai_daily_loads (
+                            analysis_run_id,
+                            class_id,
+                            date,
+                            level,
+                            source,
+                            reduce_load,
+                            suitable_for_moving
+                        )
+                        SELECT
+                            :run_id,
+                            :class_id,
+                            :target_date,
+                            :level,
+                            :source,
+                            :reduce_load,
+                            :suitable_for_moving
+                        WHERE
+                            :target_date >
+                            (
+                                clock_timestamp()
+                                AT TIME ZONE :school_timezone
+                            )::date
+                        """
+                    ),
+                    {
+                        "run_id": run_id,
+                        "class_id": class_id,
+                        "target_date": item.date,
+                        "level": item.level,
+                        "source": item.source,
+                        "reduce_load": item.reduce_load,
+                        "suitable_for_moving": item.suitable_for_moving,
+                        "school_timezone": school_timezone,
+                    },
                 )
 
                 # Актуальный прогноз записываем отдельно.
@@ -604,6 +675,39 @@ def _persist_success(
                         WHERE
                             ai_daily_forecasts.date >
                             (clock_timestamp() AT TIME ZONE :school_timezone)::date
+                            AND (
+                                ai_daily_forecasts.analysis_run_id IS NULL
+                                OR ai_daily_forecasts.analysis_run_id = :run_id
+                                OR EXISTS (
+                                    SELECT 1
+                                    FROM ai_analysis_runs AS existing_run
+                                    JOIN ai_analysis_jobs AS existing_job
+                                        ON existing_job.id = existing_run.job_id
+                                    JOIN ai_analysis_jobs AS incoming_job
+                                        ON incoming_job.id = :job_id
+                                    WHERE
+                                        existing_run.id =
+                                            ai_daily_forecasts.analysis_run_id
+                                        AND (
+                                            incoming_job.analysis_date >
+                                                existing_job.analysis_date
+                                            OR (
+                                                incoming_job.analysis_date =
+                                                    existing_job.analysis_date
+                                                AND (
+                                                    incoming_job.created_at >
+                                                        existing_job.created_at
+                                                    OR (
+                                                        incoming_job.created_at =
+                                                            existing_job.created_at
+                                                        AND incoming_job.id >
+                                                            existing_job.id
+                                                    )
+                                                )
+                                            )
+                                        )
+                                )
+                            )
                         """
                     ),
                     {
@@ -612,6 +716,7 @@ def _persist_success(
                         "level": item.level,
                         "source": item.source,
                         "run_id": run_id,
+                        "job_id": job_id,
                         "school_timezone": school_timezone,
                     },
                 )
@@ -626,21 +731,53 @@ def _persist_success(
                 ):
                     continue
 
-                db.add(
-                    AIRecommendation(
-                        analysis_run_id=run_id,
-                        class_id=class_id,
-                        teacher_id=item.teacher_id,
-                        schedule_id=item.schedule_id,
-                        date=item.date,
-                        kind=item.kind,
-                        priority=item.priority,
-                        title=item.title,
-                        recommendation_text=(
-                            item.recommendation_text
-                        ),
-                        rationale=item.rationale,
-                    )
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO ai_recommendations (
+                            analysis_run_id,
+                            class_id,
+                            teacher_id,
+                            schedule_id,
+                            date,
+                            kind,
+                            priority,
+                            title,
+                            recommendation_text,
+                            rationale
+                        )
+                        SELECT
+                            :run_id,
+                            :class_id,
+                            :teacher_id,
+                            :schedule_id,
+                            :target_date,
+                            :kind,
+                            :priority,
+                            :title,
+                            :recommendation_text,
+                            :rationale
+                        WHERE
+                            :target_date >
+                            (
+                                clock_timestamp()
+                                AT TIME ZONE :school_timezone
+                            )::date
+                        """
+                    ),
+                    {
+                        "run_id": run_id,
+                        "class_id": class_id,
+                        "teacher_id": item.teacher_id,
+                        "schedule_id": item.schedule_id,
+                        "target_date": item.date,
+                        "kind": item.kind,
+                        "priority": item.priority,
+                        "title": item.title,
+                        "recommendation_text": item.recommendation_text,
+                        "rationale": item.rationale,
+                        "school_timezone": school_timezone,
+                    },
                 )
 
         run.status = "succeeded"
@@ -816,6 +953,10 @@ async def process_next_ai_job(
                     payload,
                     class_id,
                     school_local_today,
+                    progress_callback=lambda: _renew_lease(
+                        payload["id"],
+                        worker_id,
+                    ),
                 )
 
                 scheduled_by_class[class_id] = scheduled

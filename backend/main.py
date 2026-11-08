@@ -8,15 +8,17 @@ import calendar
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.exc import IntegrityError
 
 from database import SessionLocal
 from survey_service import get_effective_survey_status
+from workload import get_daily_lesson_counts, get_load_level
 from models import (
     AcademicYear,
     Administrator,
+    AIAnalysisJob,
     AIAnalysisRun,
     AIDailyForecast,
     AIDailyLoad,
@@ -242,52 +244,131 @@ def get_user_access(
     user: User,
     db: Session,
 ) -> tuple[set[str], set[int]]:
-    """Возвращает актуальные роли пользователя и доступные ему классы."""
+    """Возвращает актуальные роли и доступные классы активных учебных лет."""
 
     roles: set[str] = set()
     class_ids: set[int] = set()
 
-    # Учитель может иметь назначения в нескольких школах.
-    teachers = db.scalars(select(Teacher).where(Teacher.user_id == user.id)).all()
+    teachers = db.scalars(
+        select(Teacher).where(Teacher.user_id == user.id)
+    ).all()
 
     if teachers:
         roles.add("teacher")
-
         teacher_ids = [teacher.id for teacher in teachers]
 
-        accessible_class_ids = db.scalars(
+        # Классы, в которых у учителя есть предметные назначения
+        # в активном учебном году.
+        assignment_class_ids = db.scalars(
+            select(TeachingAssignment.class_id)
+            .join(
+                Class,
+                and_(
+                    Class.id == TeachingAssignment.class_id,
+                    Class.school_id == TeachingAssignment.school_id,
+                    Class.academic_year_id
+                    == TeachingAssignment.academic_year_id,
+                ),
+            )
+            .join(
+                AcademicYear,
+                and_(
+                    AcademicYear.id == Class.academic_year_id,
+                    AcademicYear.school_id == Class.school_id,
+                ),
+            )
+            .where(
+                TeachingAssignment.teacher_id.in_(teacher_ids),
+                AcademicYear.is_active.is_(True),
+            )
+            .distinct()
+        ).all()
+
+        class_ids.update(assignment_class_ids)
+
+        # Классы, доступ к которым выдан отдельно,
+        # без предметных назначений.
+        access_class_ids = db.scalars(
             select(TeacherClassAccess.class_id)
             .join(
                 Class,
-                (Class.id == TeacherClassAccess.class_id)
-                & (Class.school_id == TeacherClassAccess.school_id)
-                & (Class.academic_year_id == TeacherClassAccess.academic_year_id),
+                and_(
+                    Class.id == TeacherClassAccess.class_id,
+                    Class.school_id == TeacherClassAccess.school_id,
+                    Class.academic_year_id
+                    == TeacherClassAccess.academic_year_id,
+                ),
             )
-            .where(TeacherClassAccess.teacher_id.in_(teacher_ids))
+            .join(
+                AcademicYear,
+                and_(
+                    AcademicYear.id == Class.academic_year_id,
+                    AcademicYear.school_id == Class.school_id,
+                ),
+            )
+            .where(
+                TeacherClassAccess.teacher_id.in_(teacher_ids),
+                AcademicYear.is_active.is_(True),
+            )
+            .distinct()
         ).all()
 
-        class_ids.update(accessible_class_ids)
+        class_ids.update(access_class_ids)
 
-    # Администратор имеет доступ к классам своих школ.
+    # Администратор имеет доступ ко всем классам активного
+    # учебного года своих школ.
     admin_school_ids = db.scalars(
-        select(Administrator.school_id).where(Administrator.user_id == user.id)
+        select(Administrator.school_id).where(
+            Administrator.user_id == user.id
+        )
     ).all()
 
     if admin_school_ids:
         roles.add("admin")
 
         admin_class_ids = db.scalars(
-            select(Class.id).where(Class.school_id.in_(admin_school_ids))
+            select(Class.id)
+            .join(
+                AcademicYear,
+                and_(
+                    AcademicYear.id == Class.academic_year_id,
+                    AcademicYear.school_id == Class.school_id,
+                ),
+            )
+            .where(
+                Class.school_id.in_(admin_school_ids),
+                AcademicYear.is_active.is_(True),
+            )
         ).all()
 
         class_ids.update(admin_class_ids)
 
-    # Ученик имеет доступ только к собственному классу.
-    student = db.scalar(select(Student).where(Student.user_id == user.id))
+    # Ученик получает доступ к собственному классу,
+    # если тот относится к активному учебному году.
+    student = db.scalar(
+        select(Student).where(Student.user_id == user.id)
+    )
 
     if student is not None:
         roles.add("student")
-        class_ids.add(student.class_id)
+
+        active_student_class_id = db.scalar(
+            select(Class.id)
+            .join(
+                AcademicYear,
+                and_(
+                    AcademicYear.id == Class.academic_year_id,
+                    AcademicYear.school_id == Class.school_id,
+                ),
+            )
+            .where(
+                Class.id == student.class_id,
+                AcademicYear.is_active.is_(True),
+            )
+        )
+
+        if active_student_class_id is not None:
+            class_ids.add(active_student_class_id)
 
     return roles, class_ids
 
@@ -353,6 +434,30 @@ def require_school_access(
     return school
 
 
+def get_active_school_class(
+    db: Session,
+    school_id: int,
+    class_code: str,
+) -> Class | None:
+    """Находит класс по коду только в активном учебном году школы."""
+
+    return db.scalar(
+        select(Class)
+        .join(
+            AcademicYear,
+            and_(
+                AcademicYear.id == Class.academic_year_id,
+                AcademicYear.school_id == Class.school_id,
+            ),
+        )
+        .where(
+            Class.school_id == school_id,
+            Class.code == class_code,
+            AcademicYear.is_active.is_(True),
+        )
+    )
+
+
 def require_class_access(
     class_code: str,
     user: User,
@@ -377,11 +482,10 @@ def require_class_access(
 
     school_id = next(iter(school_ids))
 
-    school_class = db.scalar(
-        select(Class).where(
-            Class.school_id == school_id,
-            Class.code == class_code,
-        )
+    school_class = get_active_school_class(
+        db=db,
+        school_id=school_id,
+        class_code=class_code,
     )
 
     if school_class is None:
@@ -420,11 +524,10 @@ def require_school_class_access(
     require_school_access(school_id, user, db)
 
     # Ищем класс одновременно по школе и публичному коду.
-    school_class = db.scalar(
-        select(Class).where(
-            Class.school_id == school_id,
-            Class.code == class_code,
-        )
+    school_class = get_active_school_class(
+        db=db,
+        school_id=school_id,
+        class_code=class_code,
     )
 
     if school_class is None:
@@ -471,24 +574,62 @@ def can_access_survey_class(
     if is_admin is not None:
         return True
 
-    # Учитель должен иметь доступ к этому классу
-    # в соответствующем учебном году.
-    is_teacher = db.scalar(
+    # Учитель может получить доступ через отдельную запись
+    # TeacherClassAccess.
+    is_teacher_access = db.scalar(
         select(TeacherClassAccess.id)
         .join(
             Teacher,
             Teacher.id == TeacherClassAccess.teacher_id,
+        )
+        .join(
+            AcademicYear,
+            and_(
+                AcademicYear.id == TeacherClassAccess.academic_year_id,
+                AcademicYear.school_id == TeacherClassAccess.school_id,
+            ),
         )
         .where(
             Teacher.user_id == user.id,
             TeacherClassAccess.class_id == school_class.id,
             TeacherClassAccess.school_id == school_class.school_id,
             TeacherClassAccess.academic_year_id == school_class.academic_year_id,
+            AcademicYear.is_active.is_(True),
         )
         .limit(1)
     )
 
-    if is_teacher is not None:
+    if is_teacher_access is not None:
+        return True
+
+    # Либо через предметное назначение в активном учебном году.
+    is_teacher_assignment = db.scalar(
+        select(TeachingAssignment.id)
+        .join(
+            Teacher,
+            Teacher.id == TeachingAssignment.teacher_id,
+        )
+        .join(
+            AcademicYear,
+            and_(
+                AcademicYear.id
+                == TeachingAssignment.academic_year_id,
+                AcademicYear.school_id
+                == TeachingAssignment.school_id,
+            ),
+        )
+        .where(
+            Teacher.user_id == user.id,
+            TeachingAssignment.class_id == school_class.id,
+            TeachingAssignment.school_id == school_class.school_id,
+            TeachingAssignment.academic_year_id
+            == school_class.academic_year_id,
+            AcademicYear.is_active.is_(True),
+        )
+        .limit(1)
+    )
+
+    if is_teacher_assignment is not None:
         return True
 
     # У ученика должно быть ровно одно действующее зачисление
@@ -974,9 +1115,17 @@ def get_school_classes(
     # к которым у пользователя есть доступ.
     classes = db.scalars(
         select(Class)
+        .join(
+            AcademicYear,
+            and_(
+                AcademicYear.id == Class.academic_year_id,
+                AcademicYear.school_id == Class.school_id,
+            ),
+        )
         .where(
             Class.school_id == school_id,
             Class.id.in_(allowed_class_ids),
+            AcademicYear.is_active.is_(True),
         )
         .order_by(Class.code)
     ).all()
@@ -1003,48 +1152,6 @@ def get_school_classes(
         )
 
     return result
-
-
-def get_daily_lesson_counts(
-    db: Session,
-    class_id: int,
-    start_date: PythonDate,
-    end_date: PythonDate,
-) -> Dict[PythonDate, int]:
-    """Считает уроки по дням, не удваивая уроки разных подгрупп."""
-
-    rows = db.execute(
-        select(
-            Schedule.date,
-            func.count(func.distinct(Schedule.lesson_number)),
-        )
-        .join(
-            TeachingAssignment,
-            Schedule.assignment_id == TeachingAssignment.id,
-        )
-        .where(
-            TeachingAssignment.class_id == class_id,
-            Schedule.date >= start_date,
-            Schedule.date <= end_date,
-        )
-        .group_by(Schedule.date)
-    ).all()
-
-    return {day: count for day, count in rows}
-
-
-def get_load_level(lesson_count: int) -> int:
-    """Переводит количество уроков в уровень нагрузки от 0 до 4."""
-
-    if lesson_count >= 7:
-        return 0
-    if lesson_count == 6:
-        return 1
-    if lesson_count == 5:
-        return 2
-    if lesson_count == 4:
-        return 3
-    return 4
 
 
 def get_school_local_today(
@@ -1076,6 +1183,79 @@ def get_school_local_today(
     return datetime.now(timezone.utc).astimezone(school_timezone).date()
 
 
+def get_effective_daily_loads(
+    school_class: Class,
+    start_date: PythonDate,
+    end_date: PythonDate,
+    db: Session,
+) -> Dict[PythonDate, tuple[int | None, str | None]]:
+    """
+    Возвращает эффективный уровень нагрузки по каждой дате.
+
+    Приоритет:
+    1. Сохранённый прогноз (AI или Python).
+    2. Python-расчёт по расписанию, если прогноза нет.
+    3. None, если уроков нет.
+
+    source:
+    - ai;
+    - python;
+    - None, если день без уроков.
+    """
+
+    lesson_counts = get_daily_lesson_counts(
+        db=db,
+        class_id=school_class.id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    forecast_rows = db.execute(
+        select(
+            AIDailyForecast.date,
+            AIDailyForecast.level,
+            AIDailyForecast.source,
+        ).where(
+            AIDailyForecast.class_id == school_class.id,
+            AIDailyForecast.date >= start_date,
+            AIDailyForecast.date <= end_date,
+        )
+    ).all()
+
+    forecasts = {
+        forecast_date: (level, source)
+        for forecast_date, level, source in forecast_rows
+    }
+
+    result = {}
+
+    current_date = start_date
+
+    while current_date <= end_date:
+        lesson_count = lesson_counts.get(current_date, 0)
+
+        if lesson_count == 0:
+            result[current_date] = (None, None)
+
+        else:
+            forecast = forecasts.get(current_date)
+
+            if forecast is not None:
+                result[current_date] = (
+                    forecast[0],
+                    forecast[1],
+                )
+            else:
+                result[current_date] = (
+                    get_load_level(lesson_count),
+                    "python",
+                )
+
+        current_date += timedelta(days=1)
+
+    return result
+
+
 def build_class_heatmap(
     school_class: Class,
     month: str,
@@ -1105,21 +1285,12 @@ def build_class_heatmap(
     start_date = PythonDate(year, month_number, 1)
     end_date = PythonDate(year, month_number, days_in_month)
 
-    forecast_rows = db.execute(
-        select(
-            AIDailyForecast.date,
-            AIDailyForecast.level,
-        ).where(
-            AIDailyForecast.class_id == school_class.id,
-            AIDailyForecast.date >= start_date,
-            AIDailyForecast.date <= end_date,
-        )
-    ).all()
-
-    forecast_levels = {
-        forecast_date: level
-        for forecast_date, level in forecast_rows
-    }
+    effective_loads = get_effective_daily_loads(
+        school_class=school_class,
+        start_date=start_date,
+        end_date=end_date,
+        db=db,
+    )
 
     now = datetime.now(timezone.utc)
 
@@ -1152,9 +1323,9 @@ def build_class_heatmap(
     return [
         LoadDay(
             day=day,
-            level=forecast_levels.get(
+            level=effective_loads[
                 PythonDate(year, month_number, day)
-            ),
+            ][0],
             is_editing=day in editing_days,
         )
         for day in range(1, days_in_month + 1)
@@ -1202,24 +1373,26 @@ def build_class_summary(
             school_class.school_id,
         )
 
-    forecast = db.scalar(
-        select(AIDailyForecast).where(
+    effective_loads = get_effective_daily_loads(
+        school_class=school_class,
+        start_date=target_date,
+        end_date=target_date,
+        db=db,
+    )
+
+    level, source = effective_loads[target_date]
+
+    has_saved_forecast = db.scalar(
+        select(AIDailyForecast.id).where(
             AIDailyForecast.class_id == school_class.id,
             AIDailyForecast.date == target_date,
         )
-    )
-
-    if forecast is None:
-        return ClassStatus(
-            level=None,
-            date=target_date.strftime("%d.%m"),
-            hasData=False,
-        )
+    ) is not None
 
     return ClassStatus(
-        level=forecast.level,
+        level=level,
         date=target_date.strftime("%d.%m"),
-        hasData=True,
+        hasData=has_saved_forecast,
     )
 
 
@@ -1265,10 +1438,20 @@ def get_survey_classes(
     classes = db.scalars(
         select(Class)
         .join(
+            AcademicYear,
+            and_(
+                AcademicYear.id == Class.academic_year_id,
+                AcademicYear.school_id == Class.school_id,
+            ),
+        )
+        .join(
             SurveyInstance,
             SurveyInstance.class_id == Class.id,
         )
-        .where(Class.school_id == school_id)
+        .where(
+            Class.school_id == school_id,
+            AcademicYear.is_active.is_(True),
+        )
         .distinct()
         .order_by(Class.code)
     ).all()
@@ -1316,11 +1499,10 @@ def get_class_surveys(
 ):
     """Возвращает доступные пользователю даты опросов класса."""
 
-    school_class = db.scalar(
-        select(Class).where(
-            Class.school_id == school_id,
-            Class.code == class_code,
-        )
+    school_class = get_active_school_class(
+        db=db,
+        school_id=school_id,
+        class_code=class_code,
     )
 
     if school_class is None:
@@ -1376,11 +1558,10 @@ def get_survey_statistics(
     """Возвращает агрегированную статистику опроса класса."""
 
     # Находим класс в выбранной школе.
-    school_class = db.scalar(
-        select(Class).where(
-            Class.school_id == school_id,
-            Class.code == class_code,
-        )
+    school_class = get_active_school_class(
+        db=db,
+        school_id=school_id,
+        class_code=class_code,
     )
 
     if school_class is None:
@@ -1560,15 +1741,31 @@ def build_class_recommendations(
 
     runs = db.scalars(
         select(AIAnalysisRun)
+        .join(
+            AIAnalysisJob,
+            AIAnalysisJob.id == AIAnalysisRun.job_id,
+        )
         .where(
-            AIAnalysisRun.class_id == school_class.id,
-            AIAnalysisRun.scope == "class",
+            AIAnalysisRun.school_id == school_class.school_id,
+            AIAnalysisRun.academic_year_id
+            == school_class.academic_year_id,
+            or_(
+                and_(
+                    AIAnalysisRun.scope == "class",
+                    AIAnalysisRun.class_id == school_class.id,
+                ),
+                and_(
+                    AIAnalysisRun.scope == "school",
+                    AIAnalysisRun.class_id.is_(None),
+                ),
+            ),
             AIAnalysisRun.period_start <= run_window_end,
             AIAnalysisRun.period_end >= run_window_start,
         )
         .order_by(
-            AIAnalysisRun.created_at.desc(),
-            AIAnalysisRun.id.desc(),
+            AIAnalysisJob.analysis_date.desc(),
+            AIAnalysisJob.created_at.desc(),
+            AIAnalysisJob.id.desc(),
         )
     ).all()
 
@@ -1594,6 +1791,7 @@ def build_class_recommendations(
 
     daily_loads: list[RecommendationDailyLoad] = []
     recommendations: list[RecommendationDetail] = []
+    load_rows: list = []
 
     if successful_run is not None:
         load_rows = db.scalars(
@@ -1648,16 +1846,32 @@ def build_class_recommendations(
                         AIDailyLoad,
                         AIDailyLoad.analysis_run_id == AIAnalysisRun.id,
                     )
+                    .join(
+                        AIAnalysisJob,
+                        AIAnalysisJob.id == AIAnalysisRun.job_id,
+                    )
                     .where(
-                        AIAnalysisRun.class_id == school_class.id,
-                        AIAnalysisRun.scope == "class",
+                        AIAnalysisRun.school_id == school_class.school_id,
+                        AIAnalysisRun.academic_year_id
+                        == school_class.academic_year_id,
+                        or_(
+                            and_(
+                                AIAnalysisRun.scope == "class",
+                                AIAnalysisRun.class_id == school_class.id,
+                            ),
+                            and_(
+                                AIAnalysisRun.scope == "school",
+                                AIAnalysisRun.class_id.is_(None),
+                            ),
+                        ),
                         AIAnalysisRun.status == "succeeded",
                         AIDailyLoad.class_id == school_class.id,
                         AIDailyLoad.date == target_date,
                     )
                     .order_by(
-                        AIAnalysisRun.created_at.desc(),
-                        AIAnalysisRun.id.desc(),
+                        AIAnalysisJob.analysis_date.desc(),
+                        AIAnalysisJob.created_at.desc(),
+                        AIAnalysisJob.id.desc(),
                     )
                 ).all()
 
@@ -1722,17 +1936,74 @@ def build_class_recommendations(
                 )
             )
 
-    days_to_reduce = [
-        item.date.day
-        for item in daily_loads
-        if item.level in (0, 1)
-    ]
+    effective_loads = get_effective_daily_loads(
+        school_class=school_class,
+        start_date=period_start,
+        end_date=period_end,
+        db=db,
+    )
 
-    days_to_move_to = [
-        item.date.day
-        for item in daily_loads
-        if item.level in (3, 4) and item.source == "ai"
-    ]
+    ai_loads_by_date = {
+        row.date: row
+        for row in load_rows
+    }
+
+    daily_loads = []
+
+    days_to_reduce = []
+    days_to_move_to = []
+
+    python_lesson_counts = get_daily_lesson_counts(
+        db=db,
+        class_id=school_class.id,
+        start_date=period_start,
+        end_date=period_end,
+    )
+
+    for target_date in sorted(effective_loads):
+        level, source = effective_loads[target_date]
+        python_level = get_load_level(
+            python_lesson_counts.get(target_date, 0)
+        )
+
+        # День без уроков не попадает в dailyLoads
+        # и не становится целью переноса.
+        if level is None:
+            continue
+
+        daily_loads.append(
+            RecommendationDailyLoad(
+                date=target_date,
+                day=target_date.day,
+                level=level,
+                source=source,
+            )
+        )
+
+        if target_date <= school_local_today:
+            continue
+
+        ai_load = ai_loads_by_date.get(target_date)
+
+        # AI имеет приоритет для каждого признака отдельно.
+        if ai_load is not None and ai_load.reduce_load is not None:
+            should_reduce = ai_load.reduce_load
+        else:
+            should_reduce = python_level in (0, 1)
+
+        if (
+            ai_load is not None
+            and ai_load.suitable_for_moving is not None
+        ):
+            suitable_for_moving = ai_load.suitable_for_moving
+        else:
+            suitable_for_moving = python_level in (3, 4)
+
+        if should_reduce:
+            days_to_reduce.append(target_date.day)
+
+        if suitable_for_moving:
+            days_to_move_to.append(target_date.day)
 
     return Recommendation(
         daysToReduce=days_to_reduce,
@@ -1770,17 +2041,16 @@ def get_school_recommendations(
 ):
     """Возвращает AI-рекомендации класса с проверкой ролевого доступа."""
 
-    school = require_school_access(
+    require_school_access(
         school_id=school_id,
         user=current_user,
         db=db,
     )
 
-    school_class = db.scalar(
-        select(Class).where(
-            Class.school_id == school.id,
-            Class.code == class_code,
-        )
+    school_class = get_active_school_class(
+        db=db,
+        school_id=school_id,
+        class_code=class_code,
     )
 
     if school_class is None:
@@ -1830,19 +2100,37 @@ def get_school_recommendations(
             )
         ).all()
 
-        if not assignment_ids:
+        # Доступ к классу может быть предоставлен отдельно,
+        # без назначения учителя на конкретный предмет.
+        has_class_access = bool(
+            db.scalars(
+                select(TeacherClassAccess.id).where(
+                    TeacherClassAccess.teacher_id.in_(teacher_ids),
+                    TeacherClassAccess.class_id == school_class.id,
+                    TeacherClassAccess.school_id == school_id,
+                    TeacherClassAccess.academic_year_id
+                    == school_class.academic_year_id,
+                )
+            ).all()
+        )
+
+        if not assignment_ids and not has_class_access:
             raise HTTPException(
                 status_code=403,
                 detail="У вас нет доступа к этому классу",
             )
 
-        teacher_schedule_ids = set(
-            db.scalars(
-                select(Schedule.id).where(
-                    Schedule.assignment_id.in_(assignment_ids)
-                )
-            ).all()
-        )
+        # Уроки учителя определяются только назначениями.
+        # TeacherClassAccess сам по себе не даёт доступа
+        # к персональным рекомендациям по конкретным урокам.
+        if assignment_ids:
+            teacher_schedule_ids = set(
+                db.scalars(
+                    select(Schedule.id).where(
+                        Schedule.assignment_id.in_(assignment_ids)
+                    )
+                ).all()
+            )
 
     return build_class_recommendations(
         school_class=school_class,

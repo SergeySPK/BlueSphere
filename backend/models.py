@@ -945,6 +945,16 @@ class AIDailyLoad(Base):
         server_default="ai",
     )
 
+    reduce_load: Mapped[bool | None] = mapped_column(
+        Boolean,
+        nullable=True,
+    )
+
+    suitable_for_moving: Mapped[bool | None] = mapped_column(
+        Boolean,
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

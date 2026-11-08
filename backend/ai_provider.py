@@ -123,6 +123,38 @@ async def _send_request(
             "AI-провайдер вернул некорректный JSON."
         ) from error
 
+    choices = response_data.get("choices")
+    choice = (
+        choices[0]
+        if isinstance(choices, list) and choices
+        else {}
+    )
+    message = choice.get("message") or {}
+    content = message.get("content")
+    reasoning = message.get("reasoning")
+    usage = response_data.get("usage") or {}
+    completion_details = usage.get("completion_tokens_details") or {}
+
+    logger.info(
+        "AI response diagnostics: model=%s, finish_reason=%s, "
+        "content_type=%s, content_length=%s, reasoning_length=%s, "
+        "completion_tokens=%s, reasoning_tokens=%s",
+        response_data.get("model"),
+        choice.get("finish_reason"),
+        type(content).__name__,
+        len(content) if isinstance(content, str) else None,
+        len(reasoning) if isinstance(reasoning, str) else None,
+        usage.get("completion_tokens"),
+        completion_details.get("reasoning_tokens"),
+    )
+
+    finish_reason = choice.get("finish_reason")
+
+    if finish_reason == "length":
+        raise AIRetryableError(
+            "AI-провайдер исчерпал лимит токенов до завершения ответа."
+        )
+
     return _extract_content(response_data)
 
 

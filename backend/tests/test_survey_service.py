@@ -1411,3 +1411,40 @@ def test_process_survey_callback_rejects_missing_notification(
         "status": "closed",
         "instance_id": data["instance"].id,
     }
+
+
+@pytest.mark.parametrize(
+    "progress_status",
+    ["completed", "closed", "not_started"],
+)
+def test_process_survey_callback_rejects_inactive_progress(
+    survey_test_data,
+    survey_service_session,
+    db_session,
+    progress_status,
+):
+    data = survey_test_data
+
+    notification = SurveyNotification(
+        instance_id=data["instance"].id,
+        student_id=data["student"].id,
+        status="sent",
+        progress_status=progress_status,
+    )
+    db_session.add(notification)
+    db_session.flush()
+
+    result = survey_service.process_survey_callback(
+        max_user_id=data["max_user_id"],
+        action="survey",
+        question_id=data["questions"][0].id,
+        option_id=data["options"][0][0].id,
+    )
+
+    assert result == {
+        "status": "closed",
+        "instance_id": data["instance"].id,
+    }
+
+    db_session.refresh(notification)
+    assert notification.progress_status == progress_status

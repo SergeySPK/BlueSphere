@@ -1,9 +1,13 @@
 from types import SimpleNamespace
 import pytest
+from pydantic import ValidationError
 from fastapi import HTTPException
 from datetime import date as PythonDate
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import main
+from models import AIDailyForecast
 
 
 def test_school_classes_returns_only_accessible_classes(monkeypatch):
@@ -511,8 +515,6 @@ def test_recommendation_schema_has_backward_compatible_ai_fields():
 
 
 def test_recommendation_daily_load_rejects_invalid_level():
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         main.RecommendationDailyLoad(
             date=PythonDate(2026, 11, 9),
@@ -579,13 +581,22 @@ def _recommendation_run(
     status: str,
     period_start: PythonDate | None = None,
     period_end: PythonDate | None = None,
+    scope: str = "class",
+    class_id: int | None = 34,
+    school_id: int = 1,
+    academic_year_id: int = 7,
 ):
     """Создаёт объект запуска AI-анализа с полями builder."""
+
     year = PythonDate.today().year
 
     return SimpleNamespace(
         id=run_id,
         status=status,
+        scope=scope,
+        class_id=class_id,
+        school_id=school_id,
+        academic_year_id=academic_year_id,
         period_start=period_start or PythonDate(year, 11, 1),
         period_end=period_end or PythonDate(year, 11, 30),
     )
@@ -624,6 +635,7 @@ class _RecommendationFakeDB:
         *results,
     ):
         self.calls = 0
+        self.execute_calls = 0
         self.queries = []
 
         self.daily_loads = daily_loads or []
@@ -640,6 +652,43 @@ class _RecommendationFakeDB:
 
     def scalar(self, statement):
         return "UTC"
+
+    def execute(self, query):
+        self.execute_calls += 1
+
+        selected_columns = getattr(query, "selected_columns", None)
+
+        if selected_columns is None:
+            pytest.fail(
+                "Не удалось определить столбцы SQL-запроса "
+                "в _RecommendationFakeDB"
+            )
+
+        column_count = len(selected_columns)
+
+        if column_count == 2:
+            # Запрос количества уроков по датам:
+            # (date, lesson_count).
+            rows = [
+                (item.date, 1)
+                for item in self.daily_loads
+            ]
+
+        elif column_count == 3:
+            # Запрос сохранённых прогнозов:
+            # (date, level, source).
+            rows = [
+                (item.date, item.level, item.source)
+                for item in self.daily_loads
+            ]
+
+        else:
+            pytest.fail(
+                "Неожиданное количество столбцов SQL-запроса "
+                f"в _RecommendationFakeDB: {column_count}"
+            )
+
+        return SimpleNamespace(all=lambda: rows)
 
     def scalars(self, query):
         self.queries.append(query)
@@ -667,7 +716,11 @@ def _build_recommendations(
 ):
     """Общий вызов builder с тестовыми параметрами."""
     if school_class is None:
-        school_class = SimpleNamespace(id=34, school_id=1)
+        school_class = SimpleNamespace(
+            id=34,
+            school_id=1,
+            academic_year_id=7,
+        )
 
     return main.build_class_recommendations(
         school_class=school_class,
@@ -703,6 +756,8 @@ def test_build_class_recommendations_returns_successful_ai_data():
         date=PythonDate(2026, 11, 12),
         level=3,
         source="ai",
+        reduce_load=None,
+        suitable_for_moving=None,
     )
 
     recommendation = _recommendation_row(
@@ -851,6 +906,89 @@ def test_build_class_recommendations_uses_newest_run_for_tomorrow(
     assert len(result.recommendations) == 1
     assert result.recommendations[0].title == "Рекомендация 200"
     assert result.recommendations[0].date == tomorrow
+
+
+def test_build_class_recommendations_reads_school_scope_run_for_class(
+    monkeypatch,
+):
+    local_today = PythonDate(2026, 11, 11)
+    tomorrow = PythonDate(2026, 11, 12)
+
+    monkeypatch.setattr(
+        main,
+        "get_school_local_today",
+        lambda db, school_id: local_today,
+    )
+
+    school_run = _recommendation_run(
+        run_id=20,
+        status="succeeded",
+        scope="school",
+        class_id=None,
+        school_id=1,
+        academic_year_id=7,
+        period_start=tomorrow,
+        period_end=PythonDate(2026, 11, 25),
+    )
+
+    daily_load = SimpleNamespace(
+        date=tomorrow,
+        level=3,
+        source="ai",
+        reduce_load=True,
+        suitable_for_moving=False,
+    )
+
+    recommendation = _recommendation_row(
+        recommendation_id=200,
+        kind="class",
+        recommendation_date=tomorrow,
+    )
+
+    db = _RecommendationFakeDB(
+        [school_run],
+        [daily_load],
+        [school_run],
+        [recommendation],
+    )
+
+    school_class = SimpleNamespace(
+        id=34,
+        school_id=1,
+        academic_year_id=7,
+    )
+
+    result = _build_recommendations(
+        db,
+        school_class=school_class,
+        month=None,
+    )
+
+    assert result.analysisStatus == "succeeded"
+    assert result.isStale is False
+    assert result.dataSource == "ai"
+
+    assert len(result.dailyLoads) == 1
+    assert result.dailyLoads[0].date == tomorrow
+    assert result.dailyLoads[0].level == 3
+
+    assert len(result.recommendations) == 1
+    assert result.recommendations[0].date == tomorrow
+
+    assert result.daysToReduce == [12]
+    assert result.daysToMoveTo == []
+
+    # Проверяем, что оба запроса допускают школьные запуски.
+    for query in (db.queries[0], db.queries[2]):
+        compiled = query.compile()
+        sql = str(compiled)
+
+        assert "ai_analysis_runs.school_id" in sql
+        assert "ai_analysis_runs.academic_year_id" in sql
+        assert "ai_analysis_jobs.analysis_date" in sql
+        assert "ai_analysis_jobs.created_at" in sql
+        assert "ai_analysis_jobs.id" in sql
+        assert "school" in compiled.params.values()
 
 
 def test_build_class_recommendations_does_not_restore_older_run_recommendations(
@@ -1107,6 +1245,8 @@ def test_build_class_recommendations_marks_today_fallback_stale_when_newer_run_e
         date=local_today,
         level=2,
         source="ai",
+        reduce_load=None,
+        suitable_for_moving=None,
     )
 
     today_recommendation = _recommendation_row(
@@ -1248,6 +1388,8 @@ def test_build_class_recommendations_marks_previous_success_as_stale(
         date=PythonDate(2026, 11, 12),
         level=2,
         source="ai",
+        reduce_load=None,
+        suitable_for_moving=None,
     )
 
     db = _RecommendationFakeDB(
@@ -1441,9 +1583,6 @@ def test_build_class_recommendations_lesson_without_teacher_id_is_allowed_if_sch
 
 
 def test_build_class_heatmap_uses_ai_forecasts_and_preserves_missing_values():
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
     school_timezone = "Asia/Yekaterinburg"
     today = datetime.now(ZoneInfo(school_timezone)).date()
 
@@ -1467,8 +1606,14 @@ def test_build_class_heatmap_uses_ai_forecasts_and_preserves_missing_values():
             self.execute_calls += 1
 
             if self.execute_calls == 1:
+                # Количество уроков за день.
                 return FakeResult([(forecast_date, 2)])
 
+            if self.execute_calls == 2:
+                # Сохранённый AI-прогноз.
+                return FakeResult([(forecast_date, 2, "ai")])
+
+            # Запрос активных сессий редактирования.
             return FakeResult([])
 
     db = FakeDB()
@@ -1548,6 +1693,44 @@ def _prepare_recommendations_endpoint(
     return user, school_class, db
 
 
+def test_school_recommendations_denies_admin_from_another_school(
+    monkeypatch,
+):
+    def unexpected_builder(**kwargs):
+        pytest.fail(
+            "Рекомендации нельзя получать без доступа к школе"
+        )
+
+    user, _, db = _prepare_recommendations_endpoint(
+        monkeypatch,
+        roles={"admin"},
+        builder=unexpected_builder,
+    )
+
+    def deny_school_access(school_id, user, db):
+        raise HTTPException(
+            status_code=403,
+            detail="У вас нет доступа к этой школе",
+        )
+
+    monkeypatch.setattr(
+        main,
+        "require_school_access",
+        deny_school_access,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        main.get_school_recommendations(
+            school_id=2,
+            class_code="1a",
+            current_user=user,
+            db=db,
+        )
+
+    assert error.value.status_code == 403
+    assert error.value.detail == "У вас нет доступа к этой школе"
+
+
 def test_school_recommendations_passes_teacher_access_to_builder(monkeypatch):
     captured = {}
 
@@ -1561,6 +1744,7 @@ def test_school_recommendations_passes_teacher_access_to_builder(monkeypatch):
         scalar_results=[
             [100],  # Teacher.id
             [200],  # TeachingAssignment.id
+            [],     # TeacherClassAccess.id
             [500, 501],  # Schedule.id
         ],
         builder=fake_builder,
@@ -1608,18 +1792,22 @@ def test_school_recommendations_denies_teacher_without_teacher_record(
     assert error.value.detail == "У вас нет доступа к этому классу"
 
 
-def test_school_recommendations_denies_teacher_without_class_assignment(
+def test_school_recommendations_denies_teacher_without_class_assignment_or_access(
     monkeypatch,
 ):
     def unexpected_builder(**kwargs):
-        pytest.fail("Builder не должен вызываться без назначения")
+        pytest.fail(
+            "Builder не должен вызываться без назначения "
+            "и без TeacherClassAccess"
+        )
 
     user, _, db = _prepare_recommendations_endpoint(
         monkeypatch,
         roles={"teacher"},
         scalar_results=[
             [100],  # Teacher.id
-            [],  # TeachingAssignment.id
+            [],     # TeachingAssignment.id
+            [],     # TeacherClassAccess.id
         ],
         builder=unexpected_builder,
     )
@@ -1634,6 +1822,40 @@ def test_school_recommendations_denies_teacher_without_class_assignment(
 
     assert error.value.status_code == 403
     assert error.value.detail == "У вас нет доступа к этому классу"
+
+
+def test_school_recommendations_allows_teacher_class_access_without_assignment(
+    monkeypatch,
+):
+    captured = {}
+
+    def fake_builder(**kwargs):
+        captured.update(kwargs)
+        return "recommendations"
+
+    user, school_class, db = _prepare_recommendations_endpoint(
+        monkeypatch,
+        roles={"teacher"},
+        scalar_results=[
+            [100],  # Teacher.id
+            [],     # TeachingAssignment.id
+            [300],  # TeacherClassAccess.id
+        ],
+        builder=fake_builder,
+    )
+
+    result = main.get_school_recommendations(
+        school_id=1,
+        class_code="1a",
+        current_user=user,
+        db=db,
+    )
+
+    assert result == "recommendations"
+    assert captured["school_class"] is school_class
+    assert captured["is_admin"] is False
+    assert captured["teacher_ids"] == {100}
+    assert captured["teacher_schedule_ids"] == set()
 
 
 def test_school_recommendations_admin_has_precedence_over_teacher_role(
@@ -1724,46 +1946,298 @@ def test_school_recommendations_returns_404_when_class_is_missing(
     assert error.value.detail == "Класс не найден"
 
 
-def test_build_class_summary_returns_level_from_ai_forecast():
+
+@pytest.mark.parametrize(
+    ("forecast_exists", "expected_has_data"),
+    [
+        (True, True),
+        (False, False),
+    ],
+)
+def test_build_class_summary_has_data_reflects_saved_forecast(
+    monkeypatch,
+    forecast_exists,
+    expected_has_data,
+):
     target_date = PythonDate(2026, 11, 12)
+
+    monkeypatch.setattr(
+        main,
+        "get_effective_daily_loads",
+        lambda **kwargs: {
+            target_date: (3, "python"),
+        },
+    )
 
     class FakeDB:
         def scalar(self, query):
+            return 1 if forecast_exists else None
+
+    result = main.build_class_summary(
+        school_class=SimpleNamespace(
+            id=34,
+            school_id=1,
+        ),
+        target_date=target_date,
+        db=FakeDB(),
+    )
+
+    assert result.level == 3
+    assert result.date == "12.11"
+    assert result.has_data is expected_has_data
+
+
+
+def test_get_effective_daily_loads_preserves_saved_python_forecast(
+    monkeypatch,
+):
+    target_date = PythonDate(2026, 11, 12)
+
+    monkeypatch.setattr(
+        main,
+        "get_daily_lesson_counts",
+        lambda **kwargs: {target_date: 7},
+    )
+
+    class FakeDB:
+        def execute(self, query):
             return SimpleNamespace(
-                level=1,
-                date=target_date,
+                all=lambda: [
+                    (target_date, 4, "python"),
+                ]
             )
 
-    result = main.build_class_summary(
-        school_class=SimpleNamespace(
-            id=34,
-            school_id=1,
-        ),
-        target_date=target_date,
+    result = main.get_effective_daily_loads(
+        school_class=SimpleNamespace(id=34),
+        start_date=target_date,
+        end_date=target_date,
         db=FakeDB(),
     )
 
-    assert result.level == 1
-    assert result.date == "12.11"
-    assert result.has_data is True
+    # Несмотря на изменившееся расписание (7 уроков),
+    # возвращается ранее сохранённый Python-прогноз.
+    assert result[target_date] == (4, "python")
 
 
-def test_build_class_summary_returns_no_data_when_forecast_is_missing():
+def test_get_effective_daily_loads_uses_python_for_missing_forecast(
+    monkeypatch,
+):
     target_date = PythonDate(2026, 11, 12)
 
-    class FakeDB:
-        def scalar(self, query):
-            return None
+    monkeypatch.setattr(
+        main,
+        "get_daily_lesson_counts",
+        lambda **kwargs: {target_date: 7},
+    )
 
-    result = main.build_class_summary(
-        school_class=SimpleNamespace(
-            id=34,
-            school_id=1,
-        ),
-        target_date=target_date,
+    class FakeDB:
+        def execute(self, query):
+            return SimpleNamespace(all=lambda: [])
+
+    result = main.get_effective_daily_loads(
+        school_class=SimpleNamespace(id=34),
+        start_date=target_date,
+        end_date=target_date,
         db=FakeDB(),
     )
 
-    assert result.level is None
-    assert result.date == "12.11"
-    assert result.has_data is False
+    assert result[target_date] == (0, "python")
+
+
+def test_get_effective_daily_loads_returns_none_without_lessons(
+    monkeypatch,
+):
+    target_date = PythonDate(2026, 11, 12)
+
+    monkeypatch.setattr(
+        main,
+        "get_daily_lesson_counts",
+        lambda **kwargs: {},
+    )
+
+    class FakeDB:
+        def execute(self, query):
+            return SimpleNamespace(all=lambda: [])
+
+    result = main.get_effective_daily_loads(
+        school_class=SimpleNamespace(id=34),
+        start_date=target_date,
+        end_date=target_date,
+        db=FakeDB(),
+    )
+
+    assert result[target_date] == (None, None)
+
+
+@pytest.mark.parametrize(
+    (
+        "ai_level",
+        "lesson_count",
+        "reduce_load",
+        "suitable_for_moving",
+        "expected_reduce",
+        "expected_move",
+    ),
+    [
+        # AI считает день лёгким, но Python видит 7 уроков.
+        # AI-флаги отсутствуют — используется Python fallback.
+        (4, 7, None, None, [12], []),
+
+        # AI считает день перегруженным, но Python видит 2 урока.
+        # AI-флаги отсутствуют — используется Python fallback.
+        (0, 2, None, None, [], [12]),
+
+        # AI явно запрещает перенос нагрузки.
+        # Python fallback не должен его переопределять.
+        (4, 7, False, None, [], []),
+
+        # AI явно разрешает перенос.
+        # Python fallback не должен его переопределять.
+        (0, 7, None, True, [12], [12]),
+    ],
+)
+def test_recommendations_use_independent_ai_flags_and_python_fallback(
+    monkeypatch,
+    ai_level,
+    lesson_count,
+    reduce_load,
+    suitable_for_moving,
+    expected_reduce,
+    expected_move,
+):
+    target_date = PythonDate(2026, 11, 12)
+    local_today = PythonDate(2026, 11, 11)
+
+    monkeypatch.setattr(
+        main,
+        "get_school_local_today",
+        lambda db, school_id: local_today,
+    )
+
+    # Эффективный уровень тепловой карты приходит от AI.
+    monkeypatch.setattr(
+        main,
+        "get_effective_daily_loads",
+        lambda **kwargs: {
+            target_date: (ai_level, "ai"),
+        },
+    )
+
+    # Python fallback получает реальное количество уроков.
+    monkeypatch.setattr(
+        main,
+        "get_daily_lesson_counts",
+        lambda **kwargs: {
+            target_date: lesson_count,
+        },
+    )
+
+    successful_run = _recommendation_run(
+        run_id=10,
+        status="succeeded",
+        period_start=PythonDate(2026, 11, 1),
+        period_end=PythonDate(2026, 11, 30),
+    )
+
+    daily_load = SimpleNamespace(
+        date=target_date,
+        level=ai_level,
+        source="ai",
+        reduce_load=reduce_load,
+        suitable_for_moving=suitable_for_moving,
+    )
+
+    db = _RecommendationFakeDB(
+        [successful_run],
+        [daily_load],
+        [],
+    )
+
+    result = _build_recommendations(db)
+
+    assert result.dailyLoads[0].level == ai_level
+    assert result.dailyLoads[0].source == "ai"
+
+    assert result.daysToReduce == expected_reduce
+    assert result.daysToMoveTo == expected_move
+
+
+def test_recommendation_day_lists_include_only_future_dates(
+    monkeypatch,
+):
+    local_today = PythonDate(2026, 11, 11)
+
+    past_date = PythonDate(2026, 11, 10)
+    today = local_today
+    future_reduce_date = PythonDate(2026, 11, 12)
+    future_move_date = PythonDate(2026, 11, 13)
+
+    monkeypatch.setattr(
+        main,
+        "get_school_local_today",
+        lambda db, school_id: local_today,
+    )
+
+    dates = [
+        past_date,
+        today,
+        future_reduce_date,
+        future_move_date,
+    ]
+
+    daily_loads = [
+        SimpleNamespace(
+            date=target_date,
+            level=0 if target_date != future_move_date else 4,
+            source="ai",
+            reduce_load=None,
+            suitable_for_moving=None,
+        )
+        for target_date in dates
+    ]
+
+    monkeypatch.setattr(
+        main,
+        "get_effective_daily_loads",
+        lambda **kwargs: {
+            item.date: (item.level, item.source)
+            for item in daily_loads
+        },
+    )
+
+    lesson_counts = {
+        past_date: 7,
+        today: 7,
+        future_reduce_date: 7,
+        future_move_date: 2,
+    }
+
+    monkeypatch.setattr(
+        main,
+        "get_daily_lesson_counts",
+        lambda **kwargs: lesson_counts,
+    )
+
+    successful_run = _recommendation_run(
+        run_id=10,
+        status="succeeded",
+        period_start=PythonDate(2026, 11, 1),
+        period_end=PythonDate(2026, 11, 30),
+    )
+
+    db = _RecommendationFakeDB(
+        [successful_run],
+        daily_loads,
+        [],
+    )
+
+    result = _build_recommendations(db, month="11")
+
+    # История тепловой карты сохраняется полностью.
+    assert [
+        item.date for item in result.dailyLoads
+    ] == dates
+
+    # Прошедший и сегодняшний дни не становятся рекомендациями.
+    assert result.daysToReduce == [12]
+    assert result.daysToMoveTo == [13]

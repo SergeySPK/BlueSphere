@@ -197,8 +197,14 @@ class AIAnalysisInput(StrictSchema):
 class AIDailyLoadOutput(StrictSchema):
     date: Date
 
-    # 0 — перегрузка, 4 — лёгкий день.
+    # 0 — перегрузка, 4 — лёгкая нагрузка.
     level: int = Field(ge=0, le=4)
+
+    # Нужно ли снизить нагрузку в этот день.
+    reduce_load: bool | None = None
+
+    # Подходит ли день для переноса уроков на него.
+    suitable_for_moving: bool | None = None
 
     # Даты опросов, которые модель учитывала.
     survey_dates_used: list[Date] = Field(default_factory=list)

@@ -1,8 +1,8 @@
 from datetime import date, datetime, timedelta, timezone
-
+from sqlalchemy import event
 import pytest
 
-from ai_context import collect_ai_analysis_input
+from ai_context import build_ai_analysis_input_for_date, collect_ai_analysis_input
 from models import (
     AcademicYear,
     Class,
@@ -443,4 +443,160 @@ def test_rejects_target_date_without_lessons(
             period_end=date(2026, 11, 22),
             target_date=empty_date,
             now=datetime(2026, 11, 20, tzinfo=timezone.utc),
+        )
+
+
+def test_survey_aggregation_uses_batched_queries(
+    db_session,
+    ai_context_data,
+):
+    data = ai_context_data
+    select_count = 0
+
+    def count_selects(
+        connection,
+        cursor,
+        statement,
+        parameters,
+        context,
+        executemany,
+    ):
+        nonlocal select_count
+
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    engine = db_session.get_bind()
+
+    event.listen(
+        engine,
+        "before_cursor_execute",
+        count_selects,
+    )
+
+    try:
+        context = collect_ai_analysis_input(
+            db_session,
+            school_id=data["school"].id,
+            class_id=data["class"].id,
+            period_start=date(2026, 11, 2),
+            period_end=date(2026, 11, 22),
+            target_date=data["target_date"],
+            now=datetime(2026, 11, 20, tzinfo=timezone.utc),
+        )
+    finally:
+        event.remove(
+            engine,
+            "before_cursor_execute",
+            count_selects,
+        )
+
+    assert len(context.surveys) == 1
+
+    # Включая школу, учебный год, класс, назначения,
+    # расписание, опросы, вопросы, варианты и две агрегации.
+    # Количество не должно зависеть от числа вариантов.
+    assert select_count <= 10
+
+
+def test_ai_context_renews_lease_during_survey_history_collection(
+    db_session,
+    ai_context_data,
+):
+    data = ai_context_data
+    callback_calls = []
+
+    additional_surveys = []
+
+    for index in range(25):
+        survey_date = date(2026, 9, 18) + timedelta(days=index)
+
+        opens_at = datetime(
+            survey_date.year,
+            survey_date.month,
+            survey_date.day,
+            7,
+            tzinfo=timezone.utc,
+        )
+
+        additional_surveys.append(
+            SurveyInstance(
+                class_id=data["class"].id,
+                survey_date=survey_date,
+                opens_at=opens_at,
+                closes_at=opens_at + timedelta(hours=8),
+                status="closed",
+            )
+        )
+
+    db_session.add_all(additional_surveys)
+    db_session.flush()
+
+    context = collect_ai_analysis_input(
+        db_session,
+        school_id=data["school"].id,
+        class_id=data["class"].id,
+        period_start=date(2026, 11, 2),
+        period_end=date(2026, 11, 22),
+        target_date=data["target_date"],
+        now=datetime(2026, 11, 20, tzinfo=timezone.utc),
+        progress_callback=lambda: callback_calls.append(True),
+    )
+
+    assert len(context.surveys) == 26
+    assert len(callback_calls) == 1
+
+
+def test_builds_date_context_with_only_prior_surveys(
+    db_session,
+    ai_context_data,
+):
+    data = ai_context_data
+
+    base_context = collect_ai_analysis_input(
+        db_session,
+        school_id=data["school"].id,
+        class_id=data["class"].id,
+        period_start=date(2026, 11, 2),
+        period_end=date(2026, 11, 22),
+        target_date=data["target_date"],
+        now=datetime(2026, 11, 20, tzinfo=timezone.utc),
+    )
+
+    target_date = data["target_date"]
+
+    context = build_ai_analysis_input_for_date(
+        base_context,
+        target_date,
+    )
+
+    assert context.target_date == target_date
+    assert all(
+        survey.survey_date < target_date
+        for survey in context.surveys
+    )
+    assert context.assignments == base_context.assignments
+    assert context.lessons == base_context.lessons
+
+
+def test_build_date_context_rejects_day_without_lessons(
+    db_session,
+    ai_context_data,
+):
+    data = ai_context_data
+
+    base_context = collect_ai_analysis_input(
+        db_session,
+        school_id=data["school"].id,
+        class_id=data["class"].id,
+        period_start=date(2026, 11, 2),
+        period_end=date(2026, 11, 22),
+        target_date=data["target_date"],
+        now=datetime(2026, 11, 20, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(ValueError, match="нет уроков"):
+        build_ai_analysis_input_for_date(
+            base_context,
+            date(2026, 11, 11),
         )

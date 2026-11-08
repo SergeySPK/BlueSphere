@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.dialects import postgresql
 
 import main
+from models import TeacherClassAccess, User
 
 
 def create_fake_db(class_code, class_id):
@@ -240,3 +241,61 @@ def test_old_class_access_query_filters_by_school_and_code(monkeypatch):
     assert "classes.code" in str(compiled_query)
     assert 1 in compiled_query.params.values()
     assert "1a" in compiled_query.params.values()
+
+
+def test_teacher_with_assignments_gets_only_active_year_classes(
+    db_session,
+    teacher_transfer_data,
+):
+    data = teacher_transfer_data
+
+    teacher = data["old_teacher"]
+    user = db_session.get(User, teacher.user_id)
+
+    # Убираем все отдельные разрешения.
+    # Проверяем доступ исключительно через TeachingAssignment.
+    db_session.query(TeacherClassAccess).filter(
+        TeacherClassAccess.teacher_id == teacher.id
+    ).delete(synchronize_session=False)
+
+    db_session.flush()
+
+    roles, class_ids = main.get_user_access(
+        user,
+        db_session,
+    )
+
+    assert "teacher" in roles
+
+    # Есть предметные назначения в 5А и 5Б.
+    assert class_ids == {
+        data["class_5a"].id,
+        data["class_5b"].id,
+    }
+
+    # Старый 5А не должен попадать в список.
+    assert data["old_class_5a"].id not in class_ids
+
+    # 6А доступен был только через TeacherClassAccess.
+    assert data["class_6a"].id not in class_ids
+
+    # Проверяем, что API возвращает активный 5А,
+    # а не одноимённый архивный класс.
+    active_class = main.get_active_school_class(
+        db_session,
+        data["school"].id,
+        "5a",
+    )
+
+    assert active_class.id == data["class_5a"].id
+
+    result = main.get_school_classes(
+        school_id=data["school"].id,
+        current_user=user,
+        db=db_session,
+    )
+
+    assert [item.id for item in result["5 класс"]] == [
+        "5a",
+        "5b",
+    ]

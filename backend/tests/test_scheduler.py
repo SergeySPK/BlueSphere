@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from datetime import datetime, timedelta, timezone, time, date
 from zoneinfo import ZoneInfo
 
@@ -2108,7 +2109,7 @@ def test_enqueue_daily_ai_jobs_is_idempotent(
     assert len(jobs) == 1
 
 
-def test_enqueue_daily_ai_jobs_skips_before_22(
+def test_enqueue_daily_ai_jobs_recovers_previous_date_before_22(
     db_session,
     survey_test_data,
     monkeypatch,
@@ -2119,7 +2120,11 @@ def test_enqueue_daily_ai_jobs_skips_before_22(
         lambda: object(),
     )
 
+    school = survey_test_data["school"]
+
     # 21:59 по времени школы Asia/Yekaterinburg.
+    # Текущая дата школы — 7 ноября.
+    # Значит, восстанавливаем пропущенную задачу за 6 ноября.
     now_utc = datetime(
         2026,
         11,
@@ -2136,13 +2141,68 @@ def test_enqueue_daily_ai_jobs_skips_before_22(
 
     jobs = db_session.scalars(
         select(AIAnalysisJob).where(
-            AIAnalysisJob.school_id
-            == survey_test_data["school"].id,
+            AIAnalysisJob.school_id == school.id,
         )
     ).all()
 
-    assert result == 0
-    assert jobs == []
+    assert result >= 1
+    assert len(jobs) == 1
+
+    job = jobs[0]
+
+    assert job.analysis_date == date(2026, 11, 6)
+    assert job.period_start == date(2026, 11, 7)
+    assert job.dedupe_key == (
+        f"daily-school-{school.id}-2026-11-06"
+    )
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute"),
+    [
+        (22, 1),
+        (23, 59),
+    ],
+)
+def test_enqueue_daily_ai_jobs_recovers_after_2200(
+    db_session,
+    survey_test_data,
+    monkeypatch,
+    hour,
+    minute,
+):
+    monkeypatch.setattr(
+        scheduler,
+        "get_ai_config_if_configured",
+        lambda: object(),
+    )
+
+    # Asia/Yekaterinburg: UTC+5.
+    now_utc = datetime(
+        2026,
+        11,
+        7,
+        hour - 5,
+        minute,
+        tzinfo=timezone.utc,
+    )
+
+    result = scheduler.enqueue_daily_ai_jobs(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    school = survey_test_data["school"]
+
+    jobs = db_session.scalars(
+        select(AIAnalysisJob).where(
+            AIAnalysisJob.school_id == school.id,
+            AIAnalysisJob.analysis_date == date(2026, 11, 7),
+        )
+    ).all()
+
+    assert result >= 1
+    assert len(jobs) == 1
 
 
 def test_enqueue_daily_ai_jobs_does_not_exceed_academic_year_end(
@@ -2224,3 +2284,46 @@ def test_enqueue_daily_ai_jobs_skips_when_ai_is_not_configured(
 
     assert result == 0
     assert jobs == []
+
+
+def test_enqueue_daily_ai_jobs_recovers_previous_date_after_midnight(
+    db_session,
+    survey_test_data,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        scheduler,
+        "get_ai_config_if_configured",
+        lambda: object(),
+    )
+
+    school = survey_test_data["school"]
+
+    # 00:05 по времени школы Asia/Yekaterinburg.
+    now_utc = datetime(
+        2026,
+        11,
+        7,
+        19,
+        5,
+        tzinfo=timezone.utc,
+    )
+
+    result = scheduler.enqueue_daily_ai_jobs(
+        session=db_session,
+        now_utc=now_utc,
+    )
+
+    job = db_session.scalar(
+        select(AIAnalysisJob).where(
+            AIAnalysisJob.school_id == school.id,
+        )
+    )
+
+    assert result >= 1
+    assert job is not None
+    assert job.analysis_date == date(2026, 11, 7)
+    assert job.period_start == date(2026, 11, 8)
+    assert job.dedupe_key == (
+        f"daily-school-{school.id}-2026-11-07"
+    )
