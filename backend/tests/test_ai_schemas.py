@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from ai_schemas import (
     AIAnalysisInput,
     AIAnalysisOutput,
+    AIModelRecommendationOutput,
     validate_ai_output_against_input,
 )
 
@@ -129,19 +130,68 @@ def test_valid_ai_output(ai_input):
                 "teacher_id": 20,
                 "priority": "high",
                 "title": "Проверить распределение контрольных",
-                "recommendation_text": "Рассмотреть перенос работы.",
+                "recommendation_text": "Рассмотреть распределение работы.",
             },
+            {
+                "date": date(2026, 11, 3),
+                "kind": "teacher",
+                "teacher_id": 20,
+                "title": "Проверить нагрузку учителя",
+                "recommendation_text": "Распределить контрольные равномернее.",
+            },
+            {
+                "date": date(2026, 11, 3),
+                "kind": "class",
+                "title": "Проверить нагрузку класса",
+                "recommendation_text": "Оценить общую нагрузку класса.",
+            },
+        ],
+    )
+
+    assert validate_ai_output_against_input(output, ai_input) == output
+
+
+def test_recommendation_date_must_match_target_date(ai_input):
+    output = make_output(
+        recommendations=[
             {
                 "date": date(2026, 11, 4),
                 "kind": "teacher",
                 "teacher_id": 21,
                 "title": "Проверить нагрузку",
                 "recommendation_text": "Распределить контрольные равномернее.",
-            },
+            }
         ],
     )
 
-    assert validate_ai_output_against_input(output, ai_input) == output
+    with pytest.raises(
+        ValueError,
+        match="не совпадает с целевой датой",
+    ):
+        validate_ai_output_against_input(output, ai_input)
+
+
+def test_lesson_recommendation_must_reference_target_date_lesson(
+    ai_input,
+):
+    output = make_output(
+        recommendations=[
+            {
+                "date": ai_input.target_date,
+                "kind": "lesson",
+                "schedule_id": 101,
+                "teacher_id": 21,
+                "title": "Проверить урок",
+                "recommendation_text": "Проверить распределение нагрузки.",
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Дата рекомендации не совпадает",
+    ):
+        validate_ai_output_against_input(output, ai_input)
 
 
 def test_level_out_of_range():
@@ -205,11 +255,13 @@ def test_unknown_teacher_id_is_rejected(ai_input):
         validate_ai_output_against_input(output, ai_input)
 
 
-def test_assigned_teacher_without_lessons_is_valid(ai_input):
+def test_assigned_teacher_without_lessons_on_target_date_is_rejected(
+    ai_input,
+):
     output = make_output(
         recommendations=[
             {
-                "date": date(2026, 11, 5),
+                "date": date(2026, 11, 3),
                 "kind": "teacher",
                 "teacher_id": 22,
                 "title": "Проверить планирование",
@@ -218,7 +270,8 @@ def test_assigned_teacher_without_lessons_is_valid(ai_input):
         ],
     )
 
-    assert validate_ai_output_against_input(output, ai_input) == output
+    with pytest.raises(ValueError, match="нет уроков"):
+        validate_ai_output_against_input(output, ai_input)
 
 
 def test_unknown_assignment_is_rejected(ai_input):
@@ -346,3 +399,104 @@ def test_ai_daily_load_accepts_recommendation_flags():
 
     assert output.daily_loads[0].reduce_load is True
     assert output.daily_loads[0].suitable_for_moving is False
+
+
+def test_model_recommendation_rejects_legacy_date_index():
+    with pytest.raises(ValidationError):
+        AIModelRecommendationOutput(
+            recommendation_date_index=1,
+            kind="class",
+            title="Проверить нагрузку",
+            recommendation_text="Распределить нагрузку равномернее.",
+        )
+
+
+def test_model_recommendation_accepts_symbolic_references():
+    recommendation = AIModelRecommendationOutput(
+        kind="teacher",
+        priority="normal",
+        title="Распределить нагрузку",
+        recommendation_text="Рассмотреть перераспределение занятий.",
+        teacher_ref="T1",
+        lesson_ref=None,
+        reduces_target_load=False,
+    )
+
+    assert recommendation.teacher_ref == "T1"
+    assert recommendation.lesson_ref is None
+
+
+def test_model_recommendation_rejects_database_id_fields():
+    with pytest.raises(ValidationError):
+        AIModelRecommendationOutput(
+            kind="teacher",
+            title="Распределить нагрузку",
+            recommendation_text="Рассмотреть перераспределение занятий.",
+            teacher_id=20,
+            schedule_id=None,
+        )
+
+
+def test_model_recommendation_rejects_wrong_reference_kind():
+    with pytest.raises(ValidationError):
+        AIModelRecommendationOutput(
+            kind="class",
+            title="Распределить нагрузку",
+            recommendation_text="Рассмотреть перераспределение занятий.",
+            teacher_ref="T1",
+            lesson_ref=None,
+            reduces_target_load=False,
+        )
+
+
+def test_model_recommendation_does_not_require_date():
+    recommendation = AIModelRecommendationOutput(
+        kind="class",
+        title="Проверить нагрузку",
+        recommendation_text="Распределить нагрузку равномернее.",
+        reduces_target_load=False,
+    )
+
+    assert recommendation.kind == "class"
+    assert not hasattr(recommendation, "date")
+    assert not hasattr(recommendation, "recommendation_date_index")
+
+
+def test_model_recommendation_requires_reduces_target_load():
+    with pytest.raises(ValidationError):
+        AIModelRecommendationOutput(
+            kind="class",
+            title="Проверить нагрузку",
+            recommendation_text="Распределить нагрузку равномернее.",
+        )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Перенести контрольную на 2026-11-11.",
+        "Перенести контрольную на 11.11.2026.",
+        "В опросе ученики сообщили о высокой нагрузке.",
+        "70% ответивших выбрали этот вариант.",
+    ],
+)
+def test_model_recommendation_rejects_dates_and_survey_data(text):
+    with pytest.raises(ValidationError):
+        AIModelRecommendationOutput(
+            kind="class",
+            title="Проверить нагрузку",
+            recommendation_text=text,
+            reduces_target_load=False,
+        )
+
+
+def test_model_recommendation_accepts_reduction_flag():
+    recommendation = AIModelRecommendationOutput(
+        kind="lesson",
+        title="Пересмотреть контрольную",
+        recommendation_text="Рассмотреть перенос контрольной работы.",
+        lesson_ref="L1",
+        reduces_target_load=True,
+    )
+
+    assert recommendation.reduces_target_load is True

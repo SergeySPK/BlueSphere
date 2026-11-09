@@ -1,9 +1,14 @@
+import re
 from datetime import date as Date
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
 class StrictSchema(BaseModel):
     model_config = ConfigDict(
@@ -260,6 +265,135 @@ class AIRecommendationOutput(StrictSchema):
         return self
 
 
+class AIModelDailyLoadOutput(StrictSchema):
+    """Часть дневной нагрузки, которую должна вернуть модель."""
+
+    # Дату намеренно не генерирует AI.
+    level: int = Field(ge=0, le=4)
+
+    reduce_load: bool | None = None
+    suitable_for_moving: bool | None = None
+
+    survey_dates_used: list[Date] = Field(default_factory=list)
+
+
+class AIModelRecommendationOutput(StrictSchema):
+    """Рекомендация AI с символьными ссылками вместо ID БД."""
+
+    kind: Literal["class", "teacher", "lesson"]
+
+    priority: Literal["low", "normal", "high", "critical"] = "normal"
+
+    title: str = Field(min_length=1, max_length=200)
+    recommendation_text: str = Field(min_length=1, max_length=10000)
+    rationale: str | None = Field(default=None, max_length=10000)
+
+    teacher_ref: str | None = None
+    lesson_ref: str | None = None
+
+    reduces_target_load: bool
+
+    @model_validator(mode="after")
+    def validate_kind_references(self):
+        if self.kind == "class":
+            if self.teacher_ref is not None or self.lesson_ref is not None:
+                raise ValueError(
+                    "Рекомендация класса не должна ссылаться "
+                    "на учителя или урок"
+                )
+
+        elif self.kind == "teacher":
+            if self.teacher_ref is None:
+                raise ValueError(
+                    "Для рекомендации учителю обязателен teacher_ref"
+                )
+
+            if self.lesson_ref is not None:
+                raise ValueError(
+                    "Рекомендация учителю не должна ссылаться "
+                    "на конкретный урок"
+                )
+
+        elif self.kind == "lesson":
+            if self.lesson_ref is None:
+                raise ValueError(
+                    "Для рекомендации уроку обязателен lesson_ref"
+                )
+
+            if self.teacher_ref is not None:
+                raise ValueError(
+                    "Для рекомендации уроку teacher_ref "
+                    "не должен передаваться"
+                )
+
+        if not self.title.strip():
+            raise ValueError("Заголовок рекомендации пуст")
+
+        if not self.recommendation_text.strip():
+            raise ValueError("Текст рекомендации пуст")
+
+        return self
+
+
+    @model_validator(mode="after")
+    def validate_recommendation_content(self):
+        text = "\n".join(
+            value
+            for value in (
+                self.title,
+                self.recommendation_text,
+                self.rationale or "",
+            )
+            if value
+        )
+
+        # ИИ не должен самостоятельно выбирать дату переноса.
+        date_patterns = (
+            r"\b\d{4}-\d{2}-\d{2}\b",
+            r"\b\d{2}[./]\d{2}[./]\d{4}\b",
+        )
+
+        if any(re.search(pattern, text) for pattern in date_patterns):
+            raise ValueError(
+                "Рекомендация не должна содержать самостоятельно "
+                "выбранную календарную дату"
+            )
+
+        # Результаты опросов используются при оценке дневной нагрузки,
+        # но не должны пересказываться в текстовых рекомендациях.
+        survey_pattern = (
+            r"\b(?:опрос\w*|анкет\w*|респондент\w*|"
+            r"ответивш\w*|процент\w*)\b"
+            r"|\b\d+(?:[.,]\d+)?\s*%"
+        )
+
+        if re.search(survey_pattern, text, flags=re.IGNORECASE):
+            raise ValueError(
+                "Текст рекомендации не должен содержать "
+                "результаты или упоминания опросов"
+            )
+
+        return self
+
+
+class AIModelAnalysisOutput(StrictSchema):
+    """Контракт JSON, который непосредственно возвращает AI."""
+
+    schema_version: Literal["1.0"] = "1.0"
+
+    daily_loads: list[AIModelDailyLoadOutput]
+    recommendations: list[AIModelRecommendationOutput]
+
+    @model_validator(mode="after")
+    def validate_daily_loads(self):
+        if len(self.daily_loads) != 1:
+            raise ValueError(
+                "Ответ должен содержать нагрузку ровно для одной даты"
+            )
+
+        return self
+
+
 class AIAnalysisOutput(StrictSchema):
     schema_version: Literal["1.0"] = "1.0"
 
@@ -362,11 +496,35 @@ def validate_ai_output_against_input(
                 "вне периода анализа"
             )
 
+        if recommendation.date != source.target_date:
+            raise ValueError(
+                f"Дата рекомендации {recommendation.date} "
+                f"не совпадает с целевой датой {source.target_date}"
+            )
+
+        if recommendation.date not in scheduled_dates:
+            raise ValueError(
+                f"Для даты рекомендации {recommendation.date} "
+                "нет уроков в расписании"
+            )
+
         if recommendation.kind == "teacher":
             if recommendation.teacher_id not in known_teacher_ids:
                 raise ValueError(
                     f"Неизвестный teacher_id: "
                     f"{recommendation.teacher_id}"
+                )
+
+            teacher_has_lesson = any(
+                lesson.teacher_id == recommendation.teacher_id
+                and lesson.date == recommendation.date
+                for lesson in source.lessons
+            )
+
+            if not teacher_has_lesson:
+                raise ValueError(
+                    f"У учителя {recommendation.teacher_id} "
+                    f"нет уроков {recommendation.date}"
                 )
 
         elif recommendation.kind == "lesson":
