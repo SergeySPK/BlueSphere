@@ -908,7 +908,7 @@ async def process_next_ai_job(
         )
 
         if job is None:
-            db.rollback()
+            db.commit()
             return False
 
         payload = _job_payload(job)
@@ -971,6 +971,8 @@ async def process_next_ai_job(
             school_local_today,
         )
 
+        _renew_lease(payload["id"], worker_id)
+
         run_id = _start_or_resume_run(
             payload,
             worker_id,
@@ -984,6 +986,10 @@ async def process_next_ai_job(
             analyzed_dates = set()
 
             for context in contexts_by_class[class_id]:
+                # Продлеваем lease перед каждым дневным анализом.
+                # Это защищает длинную серию коротких AI-запросов.
+                _renew_lease(payload["id"], worker_id)
+
                 # Дата могла наступить, пока worker анализировал
                 # предыдущий класс или предыдущий день.
                 current_school_date = _get_school_local_today(
@@ -1024,6 +1030,8 @@ async def process_next_ai_job(
                 if target_date in analyzed_dates
             ]
 
+            _renew_lease(payload["id"], worker_id)
+
             aggregated_by_class[class_id] = (
                 aggregate_period_results(
                     period_start=payload["period_start"],
@@ -1034,6 +1042,8 @@ async def process_next_ai_job(
             )
 
         provider_name, model_name = _summarize_provider_usage(provider_usages)
+
+        _renew_lease(payload["id"], worker_id)
 
         persisted = _persist_success(
             job_id=payload["id"],

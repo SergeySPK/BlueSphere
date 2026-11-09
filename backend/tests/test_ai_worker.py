@@ -8,10 +8,10 @@ from sqlalchemy import select
 
 import ai_worker
 import scheduler
-from ai_queue import enqueue_ai_job
+from ai_queue import enqueue_ai_job, claim_next_ai_job
 from ai_provider import AIRetryableError, AIProviderIdentity
 from ai_schemas import AIAnalysisOutput
-from ai_service import AIAnalysisResult
+from ai_service import AIAnalysisResult, AIResponseValidationError
 from ai_aggregation import aggregate_period_results
 from models import (
     AcademicYear,
@@ -231,6 +231,80 @@ def _make_ai_analysis_result(
     )
 
 
+def test_process_next_ai_job_commits_expired_exhausted_job_cleanup(
+    db_session,
+    monkeypatch,
+):
+    """Worker сохраняет перевод просроченной исчерпанной задачи в failed."""
+
+    _use_test_session(monkeypatch, db_session)
+    _set_ai_config(monkeypatch)
+
+    data = _create_class_job(db_session)
+
+    job = data["job"]
+    job.max_attempts = 1
+    db_session.flush()
+
+    claimed = claim_next_ai_job(
+        db_session,
+        worker_id="expired-worker",
+        lease_seconds=60,
+    )
+
+    assert claimed is not None
+    assert claimed.attempt_count == 1
+
+    run = AIAnalysisRun(
+        job_id=job.id,
+        school_id=job.school_id,
+        academic_year_id=job.academic_year_id,
+        class_id=job.class_id,
+        scope=job.scope,
+        status="running",
+        period_start=job.period_start,
+        period_end=job.period_end,
+        input_hash="test-input-hash",
+        prompt_version="test",
+        schema_version="1.0",
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(run)
+    db_session.flush()
+
+    claimed.locked_until = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    )
+    db_session.flush()
+
+    result = asyncio.run(
+        ai_worker.process_next_ai_job(
+            worker_id="cleanup-worker",
+        )
+    )
+
+    assert result is False
+
+    db_session.expire_all()
+
+    job = db_session.get(AIAnalysisJob, data["job"].id)
+
+    assert job.status == "failed"
+    assert job.locked_by is None
+    assert job.locked_until is None
+    assert job.last_error is not None
+
+    run = (
+        db_session.query(AIAnalysisRun)
+        .filter_by(job_id=job.id)
+        .one()
+    )
+
+    assert run.status == "failed"
+    assert run.error_code == "LeaseExpired"
+    assert run.completed_at is not None
+
+
 def test_process_next_ai_job_returns_false_when_queue_is_empty(
     db_session,
     monkeypatch,
@@ -245,6 +319,123 @@ def test_process_next_ai_job_returns_false_when_queue_is_empty(
     )
 
     assert result is False
+
+
+def test_process_next_ai_job_renews_lease_between_short_daily_analyses(
+    db_session,
+    monkeypatch,
+):
+    """Lease продлевается между короткими анализами разных дат."""
+
+    _use_test_session(monkeypatch, db_session)
+    _set_ai_config(monkeypatch)
+
+    data = _create_class_job(db_session)
+
+    dates = [
+        data["scheduled_date"] + timedelta(days=offset)
+        for offset in range(3)
+    ]
+
+    data["job"].period_end = dates[-1]
+    db_session.flush()
+
+    class FakeContext:
+        def __init__(self, target_date):
+            self.target_date = target_date
+
+    contexts = [
+        FakeContext(target_date)
+        for target_date in dates
+    ]
+
+    renewals = []
+
+    def fake_renew(job_id, worker_id):
+        renewals.append((job_id, worker_id))
+
+    def fake_collect(
+        db,
+        job,
+        class_id,
+        school_local_today,
+        progress_callback=None,
+    ):
+        return dates, contexts
+
+    async def fake_analyze_day(context):
+        await asyncio.sleep(0.02)
+
+        return _make_ai_analysis_result(
+            context.target_date,
+            level=1,
+        )
+
+    monkeypatch.setattr(
+        ai_worker,
+        "LEASE_SECONDS",
+        1,
+    )
+
+    monkeypatch.setattr(
+        ai_worker,
+        "_renew_lease",
+        fake_renew,
+    )
+
+    monkeypatch.setattr(
+        ai_worker,
+        "_collect_class_contexts",
+        fake_collect,
+    )
+
+    monkeypatch.setattr(
+        ai_worker,
+        "_build_input_hash",
+        lambda *args: "test-input-hash",
+    )
+
+    monkeypatch.setattr(
+        ai_worker,
+        "_start_or_resume_run",
+        lambda *args: 123,
+    )
+
+    monkeypatch.setattr(
+        ai_worker,
+        "analyze_day_with_metadata",
+        fake_analyze_day,
+    )
+
+    monkeypatch.setattr(
+        ai_worker,
+        "aggregate_period_results",
+        lambda **kwargs: object(),
+    )
+
+    monkeypatch.setattr(
+        ai_worker,
+        "_persist_success",
+        lambda **kwargs: True,
+    )
+
+    result = asyncio.run(
+        ai_worker.process_next_ai_job(
+            worker_id="lease-checkpoint-worker",
+        )
+    )
+
+    assert result is True
+
+    assert len(renewals) >= 6
+
+    assert all(
+        item == (
+            data["job"].id,
+            "lease-checkpoint-worker",
+        )
+        for item in renewals
+    )
 
 
 def test_process_next_ai_job_saves_successful_result(
@@ -583,6 +774,72 @@ def test_retryable_error_returns_job_to_queue(
     assert run.status == "queued"
     assert run.error_code == "AIRetryableError"
     assert run.completed_at is None
+
+
+def test_ai_response_validation_error_returns_job_to_queue_without_saving_result(
+    db_session,
+    monkeypatch,
+):
+    _use_test_session(monkeypatch, db_session)
+    _set_ai_config(monkeypatch)
+
+    data = _create_class_job(db_session)
+
+    async def fake_analyze_day(source):
+        raise AIResponseValidationError(
+            "AI не смог исправить невалидную рекомендацию."
+        )
+
+    monkeypatch.setattr(
+        ai_worker,
+        "analyze_day_with_metadata",
+        fake_analyze_day,
+    )
+
+    result = asyncio.run(
+        ai_worker.process_next_ai_job(
+            worker_id="test-worker",
+        )
+    )
+
+    assert result is True
+
+    db_session.expire_all()
+
+    job = db_session.get(
+        AIAnalysisJob,
+        data["job"].id,
+    )
+
+    assert job.status == "queued"
+    assert job.attempt_count == 1
+    assert job.locked_by is None
+    assert job.locked_until is None
+    assert "AIResponseValidationError" in job.last_error
+
+    run = (
+        db_session.query(AIAnalysisRun)
+        .filter_by(job_id=job.id)
+        .one()
+    )
+
+    assert run.status == "queued"
+    assert run.error_code == "AIResponseValidationError"
+    assert run.completed_at is None
+
+    forecasts = (
+        db_session.query(AIDailyForecast)
+        .filter_by(class_id=data["class"].id)
+        .all()
+    )
+    recommendations = (
+        db_session.query(AIRecommendation)
+        .filter_by(class_id=data["class"].id)
+        .all()
+    )
+
+    assert forecasts == []
+    assert recommendations == []
 
 
 def test_school_scope_processes_all_classes(
