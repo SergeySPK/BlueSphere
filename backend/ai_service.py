@@ -3,8 +3,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
+import logging
 
-from ai_prompts import build_system_prompt, build_user_prompt
+from ai_prompts import build_reference_aliases, build_system_prompt, build_user_prompt
 from ai_provider import (
     AIProviderIdentity,
     generate_json,
@@ -13,9 +14,13 @@ from ai_provider import (
 from ai_schemas import (
     AIAnalysisInput,
     AIAnalysisOutput,
+    AIModelAnalysisOutput,
+    AIModelRecommendationOutput,
+    AIRecommendationOutput,
     validate_ai_output_against_input,
 )
 
+logger = logging.getLogger(__name__)
 
 MAX_REPAIR_RESPONSE_CHARS = 20_000
 MAX_REPAIR_ERROR_CHARS = 2_000
@@ -33,11 +38,101 @@ class AIAnalysisResult:
     provider_usages: tuple[AIProviderIdentity, ...]
 
 
+def _convert_model_recommendations(
+    recommendations: list,
+    source: AIAnalysisInput,
+) -> list:
+    """
+    Преобразует символьные ссылки модели в реальные ID.
+
+    Рекомендации с неизвестными ссылками отбрасываются.
+    Остальной результат, включая дневную нагрузку, сохраняется.
+    """
+    aliases = build_reference_aliases(source)
+
+    teacher_ids_by_ref = {
+        ref: teacher_id
+        for teacher_id, ref in aliases["teachers"].items()
+    }
+
+    lessons_by_ref = {
+        ref: lesson
+        for lesson in source.lessons
+        for ref in [aliases["lessons"][lesson.schedule_id]]
+    }
+
+    converted = []
+
+    for recommendation in recommendations:
+        teacher_id = None
+        schedule_id = None
+
+        if recommendation.kind == "class":
+            pass
+
+        elif recommendation.kind == "teacher":
+            teacher_id = teacher_ids_by_ref.get(
+                recommendation.teacher_ref
+            )
+
+            if teacher_id is None:
+                logger.warning(
+                    "AI-рекомендация отброшена: неизвестный teacher_ref=%s",
+                    recommendation.teacher_ref,
+                )
+                continue
+
+            teacher_has_target_day_lesson = any(
+                lesson.teacher_id == teacher_id
+                and lesson.date == source.target_date
+                for lesson in source.lessons
+            )
+
+            if not teacher_has_target_day_lesson:
+                logger.warning(
+                    "AI-рекомендация отброшена: у teacher_ref=%s "
+                    "нет уроков в target_date",
+                    recommendation.teacher_ref,
+                )
+                continue
+
+        elif recommendation.kind == "lesson":
+            lesson = lessons_by_ref.get(recommendation.lesson_ref)
+
+            if lesson is None or lesson.date != source.target_date:
+                logger.warning(
+                    "AI-рекомендация отброшена: неизвестный "
+                    "или недопустимый lesson_ref=%s",
+                    recommendation.lesson_ref,
+                )
+                continue
+
+            schedule_id = lesson.schedule_id
+
+            # Учителя для урока определяет Python, а не модель.
+            teacher_id = lesson.teacher_id
+
+        converted.append(
+            AIRecommendationOutput(
+                date=source.target_date,
+                kind=recommendation.kind,
+                priority=recommendation.priority,
+                title=recommendation.title,
+                recommendation_text=recommendation.recommendation_text,
+                rationale=recommendation.rationale,
+                teacher_id=teacher_id,
+                schedule_id=schedule_id,
+            )
+        )
+
+    return converted
+
+
 def _validate_response(
     raw_response: str,
     source: AIAnalysisInput,
 ) -> AIAnalysisOutput:
-    """Разбирает JSON и проверяет ответ по схемам и исходному контексту."""
+    """Разбирает JSON, отдельно проверяет нагрузку и рекомендации."""
 
     payload: Any = json.loads(raw_response)
 
@@ -46,23 +141,85 @@ def _validate_response(
             "Корневой элемент ответа должен быть JSON-объектом."
         )
 
-    output = AIAnalysisOutput.model_validate(payload)
+    raw_recommendations = payload.get("recommendations")
 
-    if len(output.daily_loads) != 1:
+    if not isinstance(raw_recommendations, list):
         raise ValueError(
-            "daily_loads должен содержать ровно одну запись."
+            "Поле recommendations должно быть JSON-массивом."
         )
 
-    if output.daily_loads[0].date != source.target_date:
-        raise ValueError(
-            "Дата daily_loads не совпадает с целевой датой анализа."
-        )
+    # Сначала строго проверяем весь основной контракт и daily_loads.
+    # Рекомендации временно убираем из общей проверки, чтобы ошибка
+    # одного элемента не уничтожала корректную дневную нагрузку.
+    payload_without_recommendations = {
+        **payload,
+        "recommendations": [],
+    }
 
-    for recommendation in output.recommendations:
-        if recommendation.date < source.target_date:
+    model_output = AIModelAnalysisOutput.model_validate(
+        payload_without_recommendations
+    )
+
+    # Каждый элемент проверяется независимо.
+    # Некорректные рекомендации пропускаются, остальные сохраняются.
+    valid_recommendations = []
+
+    for index, raw_recommendation in enumerate(raw_recommendations):
+        if not isinstance(raw_recommendation, dict):
             raise ValueError(
-                "Дата рекомендации не может быть раньше target_date."
+                f"Рекомендация с индексом {index} должна быть JSON-объектом."
             )
+
+        invalid_reference_type = any(
+            raw_recommendation.get(field) is not None
+            and not isinstance(raw_recommendation[field], str)
+            for field in ("teacher_ref", "lesson_ref")
+        )
+
+        if invalid_reference_type:
+            logger.warning(
+                "AI-рекомендация отброшена: некорректный тип "
+                "teacher_ref или lesson_ref, индекс=%s",
+                index,
+            )
+            continue
+
+        recommendation = AIModelRecommendationOutput.model_validate(
+            raw_recommendation
+        )
+
+        valid_recommendations.append(recommendation)
+
+    # Если хотя бы одна рекомендация фактически уменьшает
+    # нагрузку целевого дня, daily_load обязан это отражать.
+    has_load_reduction_recommendation = any(
+        item.reduces_target_load
+        for item in valid_recommendations
+    )
+
+    daily_reduce_load = model_output.daily_loads[0].reduce_load
+
+    if has_load_reduction_recommendation and daily_reduce_load is not True:
+        raise ValueError(
+            "Рекомендация уменьшает нагрузку target_date, "
+            "но daily_load.reduce_load не равен true"
+        )
+
+    converted_recommendations = _convert_model_recommendations(
+        valid_recommendations,
+        source,
+    )
+
+    output = AIAnalysisOutput(
+        schema_version=model_output.schema_version,
+        daily_loads=[
+            {
+                "date": source.target_date,
+                **model_output.daily_loads[0].model_dump(),
+            }
+        ],
+        recommendations=converted_recommendations,
+    )
 
     return validate_ai_output_against_input(output, source)
 
@@ -136,6 +293,26 @@ async def _analyze_day(
             ValueError,
             TypeError,
         ) as error:
+            if isinstance(error, ValidationError):
+                error_details = json.dumps(
+                    error.errors(
+                        include_input=False,
+                        include_context=False,
+                        include_url=False,
+                    ),
+                    ensure_ascii=False,
+                )
+            else:
+                error_details = str(error)
+
+            logger.warning(
+                "AI response validation failed: attempt=%s/2, "
+                "error_type=%s, details=%s",
+                attempt + 1,
+                type(error).__name__,
+                error_details[:MAX_REPAIR_ERROR_CHARS],
+            )
+
             if attempt == 1:
                 raise AIResponseValidationError(
                     "AI не смог вернуть корректный ответ "
