@@ -135,7 +135,7 @@ docker compose version
 ### 3.1. Клонирование репозитория {#31-клонирование-репозитория}
 
 ``` bash
-git clone <URL_REPOSITORY>
+git clone https://github.com/SergeySPK/BlueSphere.git
 cd BlueSphere
 ```
 
